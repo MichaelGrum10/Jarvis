@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
 # One-command install for a fresh Ubuntu server.
 #
-#   curl -fsSL https://raw.githubusercontent.com/MichaelGrum10/Jarvis/claude/jarvis-ai-assistant-9tlgu3/scripts/bootstrap.sh -o bootstrap.sh
-#   less bootstrap.sh      # read it first — you're about to run it as yourself
-#   bash bootstrap.sh
+#   sudo apt-get install -y git
+#   git clone -b claude/jarvis-ai-assistant-9tlgu3 \
+#     https://github.com/MichaelGrum10/Jarvis.git ~/Jarvis
+#   bash ~/Jarvis/scripts/bootstrap.sh
+#
+# The repo is private, so git will prompt for a username and a personal access
+# token. There is no unauthenticated download path — raw.githubusercontent.com
+# returns 404 for private repos regardless of the URL form.
 #
 # Installs Docker and git, opens the firewall, clones the repo, then hands over
 # to scripts/setup.sh for credentials and starts everything.

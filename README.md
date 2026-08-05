@@ -75,13 +75,19 @@ works identically. Walkthrough in [docs/domain.md](docs/domain.md).
 On your Oracle Cloud instance (Ubuntu 22.04+, the free ARM shape is plenty):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/MichaelGrum10/Jarvis/claude/jarvis-ai-assistant-9tlgu3/scripts/bootstrap.sh -o bootstrap.sh
-less bootstrap.sh   # read before running
-bash bootstrap.sh
+sudo apt-get update -qq && sudo apt-get install -y -qq git && \
+git clone -b claude/jarvis-ai-assistant-9tlgu3 \
+  https://github.com/MichaelGrum10/Jarvis.git ~/Jarvis && \
+bash ~/Jarvis/scripts/bootstrap.sh
 ```
 
-That installs Docker and git, opens the firewall, clones the repo and walks you
-through credentials. Re-running it is safe — every step checks before acting.
+Git will ask for your GitHub username and a personal access token as the
+password — this repo is private, so an unauthenticated download can't work. See
+[docs/private-repo-access.md](docs/private-repo-access.md) for how to create the
+token, or how to make the repo public instead if you'd rather not.
+
+The script then installs Docker, opens the firewall and walks you through
+credentials. Re-running it is safe — every step checks before acting.
 
 **Setting up from a phone?** [docs/setup-from-iphone.md](docs/setup-from-iphone.md)
 covers the whole install from an iPhone, including getting SSH working.

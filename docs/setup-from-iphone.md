@@ -82,15 +82,20 @@ Typing long commands on glass is miserable, so this is one paste.
 Copy this, paste into Termius, hit return:
 
 ```
-curl -fsSL https://raw.githubusercontent.com/MichaelGrum10/Jarvis/claude/jarvis-ai-assistant-9tlgu3/scripts/bootstrap.sh -o bootstrap.sh && bash bootstrap.sh
+sudo apt-get update -qq && sudo apt-get install -y -qq git && git clone -b claude/jarvis-ai-assistant-9tlgu3 https://github.com/MichaelGrum10/Jarvis.git ~/Jarvis && bash ~/Jarvis/scripts/bootstrap.sh
 ```
 
-> Want to read it before running it? `less bootstrap.sh` first — `q` quits.
-> Running a script off the internet unread is a habit worth not forming, even
-> when it's your own repo.
+**Git will ask you to sign in**, because the repo is private:
 
-It installs Docker and git, opens the firewall, clones the repo, and pauses to
-let you set up the domain.
+- **Username**: `MichaelGrum10`
+- **Password**: a personal access token — *not* your GitHub password, which
+  GitHub stopped accepting years ago
+
+[private-repo-access.md](private-repo-access.md) walks through creating one on a
+phone, and covers making the repo public instead if you'd prefer.
+
+It then installs Docker, opens the firewall, and pauses to let you set up the
+domain.
 
 ---
 
