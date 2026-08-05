@@ -84,3 +84,22 @@ async def test_engine_refuses_when_disabled():
     result = await AutonomyEngine(settings).run("do something")
     assert result.success is False
     assert "AUTONOMY_ENABLED" in result.summary
+
+
+async def test_refuses_when_target_is_not_a_git_repo(tmp_path):
+    """Branch isolation is the rail that makes autonomy recoverable. Without a
+    repo there's no branch and no undo, so it must refuse rather than edit."""
+    from jarvis.agent.autonomy import AutonomyEngine
+    from jarvis.config import get_settings
+
+    (tmp_path / "jarvis").mkdir()
+    settings = get_settings()
+    settings.autonomy_enabled = True
+    settings.autonomy_repo_path = tmp_path
+    try:
+        result = await AutonomyEngine(settings).run("add a weather tool")
+        assert result.success is False
+        assert "not a git repository" in result.summary
+        assert result.files_changed == []
+    finally:
+        settings.autonomy_enabled = False

@@ -11,7 +11,20 @@ AUTONOMY_ENABLED=true
 AUTONOMY_MAX_ITERATIONS=6
 ```
 
-Restart, then open the drawer → **Self-improve**.
+**If you run under Docker, you also need to give it a git repository.** The image
+deliberately doesn't contain `.git`, and without one there's no branch to isolate
+work on and no way to undo it. Uncomment this line in `docker-compose.yml`:
+
+```yaml
+    volumes:
+      - jarvis-data:/data
+      - ./:/app/repo:rw        # ← uncomment this
+```
+
+Then `docker compose up -d`. If you skip this, autonomy refuses to run and tells
+you why rather than editing files with no way back.
+
+Open the drawer → **Self-improve**.
 
 It's off by default deliberately. This is the one subsystem that writes to the
 code that runs it, so it should be a decision you make rather than a default you

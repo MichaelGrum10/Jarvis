@@ -267,7 +267,28 @@ class AutonomyEngine:
             if on_log:
                 on_log(line)
 
+        # Branch isolation is the safety rail that makes everything else
+        # recoverable. Without a git repo there is no branch, no diff and no way
+        # to throw the work away — so refuse rather than edit files in place.
+        if not (root / ".git").exists():
+            result.summary = (
+                f"{root} is not a git repository, so there's no way to isolate or undo "
+                "changes. Refusing to edit code in place.\n\n"
+                "In Docker: uncomment the './:/app/repo' volume in docker-compose.yml "
+                "and restart. Outside Docker: point AUTONOMY_REPO_PATH at your checkout."
+            )
+            emit(result.summary)
+            return result
+
         branch = await self._create_branch(root, goal, emit)
+        if not branch:
+            result.summary = (
+                "Could not create a working branch, so changes could not be isolated. "
+                "Nothing was modified. Check that git works in the repository and that "
+                "there are no uncommitted changes blocking a checkout."
+            )
+            emit(result.summary)
+            return result
         result.branch = branch
 
         messages = [

@@ -1,3 +1,10 @@
+[build-system]
+# Declared explicitly: recent Python base images ship without setuptools, and
+# relying on pip's implicit fallback makes the Docker build depend on undeclared
+# behaviour.
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "jarvis"
 version = "0.1.0"

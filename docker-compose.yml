@@ -9,8 +9,16 @@ services:
     environment:
       # Point search at the bundled SearXNG rather than scraping DuckDuckGo.
       SEARXNG_URL: http://searxng:8080
+      # Where the self-improvement engine works. Only meaningful with the
+      # ./:/app/repo mount above uncommented.
+      AUTONOMY_REPO_PATH: /app/repo
     volumes:
       - jarvis-data:/data
+      # Self-improvement needs a real git repo to branch and commit in, and the
+      # image deliberately doesn't contain .git. Uncomment both lines below —
+      # together with AUTONOMY_ENABLED=true in .env — to give it this checkout.
+      # Leave commented and autonomy stays off, which is the default.
+      # - ./:/app/repo:rw
     ports:
       # Bound to localhost: Caddy terminates TLS and proxies in. Never expose
       # 8000 straight to the internet — the whole app is behind one password.
