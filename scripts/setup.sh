@@ -20,10 +20,21 @@ fail()  { printf '\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
 
 command -v openssl >/dev/null || fail "openssl is required. sudo apt install -y openssl"
 
-# Read a key's current value out of .env, if it's there.
+# Read a key's current value out of .env, if it's there. Values are written
+# single-quoted, so strip those back off or re-running would nest them.
 existing() {
   [ -f "$ENV_FILE" ] || return 0
-  sed -n "s/^$1=//p" "$ENV_FILE" | tail -1
+  sed -n "s/^$1=//p" "$ENV_FILE" | tail -1 | sed "s/^'//; s/'$//"
+}
+
+# A single quote would terminate the quoting in .env and corrupt the file. Every
+# other printable character is fine, so reject just this one rather than
+# restricting what makes a good password.
+reject_single_quote() {
+  case "$1" in
+    *"'"*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # prompt VAR "Question" ["default"] — leaves VAR set in the environment.
@@ -81,6 +92,7 @@ while :; do
   prompt_secret ACCESS_PASSWORD "   Password" "$ACCESS_PASSWORD_OLD"
   [ -z "$ACCESS_PASSWORD" ] && { warn "   Cannot be empty."; continue; }
   [ ${#ACCESS_PASSWORD} -lt 10 ] && { warn "   Use at least 10 characters."; continue; }
+  reject_single_quote "$ACCESS_PASSWORD" || { warn "   Can't contain a single quote ('). Anything else is fine."; continue; }
   break
 done
 
@@ -105,6 +117,8 @@ echo "   Needs an APP-SPECIFIC password, not your Apple ID password:"
 echo "   https://account.apple.com → Sign-In and Security → App-Specific Passwords"
 prompt ICLOUD_EMAIL "   Apple ID email" "$(existing ICLOUD_EMAIL)"
 prompt_secret ICLOUD_APP_PASSWORD "   App-specific password (xxxx-xxxx-xxxx-xxxx)" "$(existing ICLOUD_APP_PASSWORD)"
+reject_single_quote "$ICLOUD_APP_PASSWORD" || fail "The app-specific password can't contain a single quote."
+reject_single_quote "$GROQ_API_KEY" || fail "The Groq key can't contain a single quote."
 
 if [ -n "$ICLOUD_APP_PASSWORD" ] && ! printf '%s' "$ICLOUD_APP_PASSWORD" | grep -qE '^[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}$'; then
   warn "   Note: app-specific passwords look like abcd-efgh-ijkl-mnop."
@@ -132,24 +146,29 @@ prompt DOMAIN "   Your domain (blank to skip for now)" "$CURRENT_DOMAIN"
 # ---------------------------------------------------------------- write
 echo
 umask 077
+
+# Every value is single-quoted. Unquoted, a password containing '#' is truncated
+# at that character and trailing spaces are stripped — silently, so setup reports
+# success and only the login fails, with no clue why. Both Docker Compose and
+# python-dotenv strip surrounding single quotes, so this is safe for either.
 cat > "$ENV_FILE" <<EOF
 # Written by scripts/setup.sh. Never commit this file.
 
-OWNER_NAME=$OWNER_NAME
-TIMEZONE=$TIMEZONE
+OWNER_NAME='$OWNER_NAME'
+TIMEZONE='$TIMEZONE'
 
-AUTH_SECRET=$AUTH_SECRET
-ACCESS_PASSWORD=$ACCESS_PASSWORD
+AUTH_SECRET='$AUTH_SECRET'
+ACCESS_PASSWORD='$ACCESS_PASSWORD'
 
-GROQ_API_KEY=$GROQ_API_KEY
+GROQ_API_KEY='$GROQ_API_KEY'
 GROQ_MODEL=llama-3.3-70b-versatile
 GROQ_FAST_MODEL=llama-3.1-8b-instant
 WHISPER_MODEL=whisper-large-v3-turbo
 
-ICLOUD_EMAIL=$ICLOUD_EMAIL
-ICLOUD_APP_PASSWORD=$ICLOUD_APP_PASSWORD
+ICLOUD_EMAIL='$ICLOUD_EMAIL'
+ICLOUD_APP_PASSWORD='$ICLOUD_APP_PASSWORD'
 
-BRIDGE_TOKEN=$BRIDGE_TOKEN
+BRIDGE_TOKEN='$BRIDGE_TOKEN'
 
 AUTONOMY_ENABLED=false
 AUTONOMY_MAX_ITERATIONS=6
