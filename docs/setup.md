@@ -174,6 +174,22 @@ quota. Heavy days may still hit a wall — it resets hourly.
 
 **Out of disk.** `docker system prune -a` reclaims old build layers.
 
+## Starting over
+
+To wipe your credentials and data and begin again:
+
+```bash
+cd ~/Jarvis && bash scripts/reset.sh
+```
+
+It removes `.env`, the containers and the data volume holding conversations and
+memories, and reverts the domain and SearXNG secret it wrote. Your mail and
+calendar aren't touched — they live in iCloud and are only ever read live.
+
+If you're resetting because a credential leaked, **revoke it at the source too**.
+Replacing your server's copy doesn't disable the old one: Groq keys at
+console.groq.com/keys, Apple app-specific passwords at account.apple.com.
+
 ## Backups
 
 Everything lives in one SQLite file:
