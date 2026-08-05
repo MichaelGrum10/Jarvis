@@ -38,13 +38,23 @@ prompt() {
   printf -v "$var" '%s' "$answer"
 }
 
+# Secrets are read with `read -s`, so nothing echoes as you type. On a phone
+# that's indistinguishable from a dead keyboard, so say so up front and confirm
+# the character count afterwards — enough to tell a paste worked, not enough to
+# reveal anything over your shoulder.
 prompt_secret() {
   local var="$1" question="$2" default="${3:-}" answer
+  printf '\033[2m   (typing stays hidden — type or paste, then press Enter)\033[0m\n'
   if [ -n "$default" ]; then
-    read -rsp "$question [keep existing]: " answer; echo
+    read -rsp "$question [Enter = keep existing]: " answer; echo
     answer="${answer:-$default}"
   else
     read -rsp "$question: " answer; echo
+  fi
+  if [ -n "$answer" ]; then
+    printf '\033[32m   ✓ got %d characters\033[0m\n' "${#answer}"
+  else
+    printf '\033[33m   ! nothing entered\033[0m\n'
   fi
   printf -v "$var" '%s' "$answer"
 }

@@ -153,7 +153,10 @@ Back in Termius, the script asks six things:
 | What Jarvis calls you | your name |
 | Domain | `michael-jarvis.duckdns.org` |
 
-Password fields don't echo as you type — that's deliberate, keep going.
+**Password fields show nothing as you type.** That's deliberate, not a frozen
+keyboard — the most common moment to think Termius has stopped responding. Type
+or paste, press Enter, and the script confirms with `✓ got N characters` so you
+can tell it landed.
 
 Then it starts the containers. First build takes a few minutes.
 
