@@ -43,7 +43,16 @@ async function api(path, options = {}) {
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
   if (store.token) headers.Authorization = `Bearer ${store.token}`;
   const res = await fetch(API + path, { ...options, headers });
-  if (res.status === 401) { signOut(); throw new Error('Session expired.'); }
+
+  // A 401 from the login endpoint means "wrong password" — the server's own
+  // message for that, not an expired session (there was never a session to
+  // expire). Only a 401 on an already-authenticated call means the device
+  // token itself is invalid, which is the actual "session expired" case.
+  const isLoginCall = path.startsWith('/api/auth/login');
+  if (res.status === 401 && !isLoginCall) {
+    signOut();
+    throw new Error('Session expired — sign in again.');
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail || `Request failed (${res.status})`);
