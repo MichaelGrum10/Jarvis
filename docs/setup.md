@@ -31,8 +31,13 @@ sudo usermod -aG docker $USER && newgrp docker
 
 git clone https://github.com/MichaelGrum10/Jarvis.git
 cd Jarvis
-cp .env.example .env
+bash scripts/setup.sh
 ```
+
+The script handles everything in step 3 below — generating secrets, collecting
+credentials, writing `.env` with tight permissions and setting your domain in the
+`Caddyfile`. The rest of this section explains what it's asking for and where to
+get each value.
 
 ## 3. Credentials
 
@@ -67,10 +72,15 @@ revoking it from the same page cuts Jarvis off without touching your account.
 
 ## 4. Domain, TLS, launch
 
-You need HTTPS — browsers refuse geolocation and service workers over plain HTTP,
-so "find a barber near me" won't work without it.
+You need HTTPS — browsers refuse geolocation, the microphone and service workers
+over plain HTTP, so neither voice mode nor "find a barber near me" works without
+it. HTTPS in turn needs a domain, because certificates can't be issued for a bare
+IP address.
 
-Point an A record at your public IP. Free options: DuckDNS, Afraid.org. Then:
+**No domain yet? Start at [domain.md](domain.md)** — free DuckDNS subdomain, about
+two minutes.
+
+Once it resolves to your server:
 
 ```bash
 nano Caddyfile      # replace jarvis.example.com

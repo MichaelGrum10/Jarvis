@@ -52,11 +52,12 @@ getting flagged. You get every headline and summary; tap through to read the ful
 piece signed in. If you specifically want full article text automated, that's a
 decision to make knowingly, and it isn't what this ships with.
 
-**"Free" has one honest asterisk.** The software and every API are free. The
-Oracle Cloud Always Free tier covers the server. A domain name is ~$10/year, and
-you do need one: browsers refuse to hand out geolocation over plain HTTP, so the
-"near me" feature depends on a real HTTPS certificate. A DuckDNS subdomain works
-free if you'd rather not buy one.
+**You need a domain, but it can be free.** A domain is just a name pointing at
+your server's IP address — and you need one because HTTPS certificates can't be
+issued for a bare IP, while browsers block both the microphone and geolocation on
+anything that isn't HTTPS. So no domain means no voice mode and no "near me".
+DuckDNS gives you one free in about two minutes; a bought one is ~$10/year and
+works identically. Walkthrough in [docs/domain.md](docs/domain.md).
 
 ---
 
@@ -72,18 +73,16 @@ sudo usermod -aG docker $USER && newgrp docker
 
 git clone https://github.com/MichaelGrum10/Jarvis.git
 cd Jarvis
-cp .env.example .env
+bash scripts/setup.sh
 ```
 
-Fill in `.env`. The two secrets:
+The script generates both signing secrets, asks for your password, Groq key and
+Apple credentials, writes `.env` with `600` permissions, and points the
+`Caddyfile` at your domain. Re-run it any time to change one value without
+retyping the rest — it keeps your existing `AUTH_SECRET`, so re-running won't
+sign your devices out.
 
-```bash
-openssl rand -base64 32   # → AUTH_SECRET
-openssl rand -base64 32   # → BRIDGE_TOKEN
-```
-
-Then set `ACCESS_PASSWORD` (what you type once per device) and `GROQ_API_KEY`
-(free, no card, from <https://console.groq.com/keys>).
+Prefer doing it by hand? `cp .env.example .env` and fill it in.
 
 ### 2. Apple credentials
 
@@ -98,17 +97,18 @@ Calendar reuses those automatically.
 
 ### 3. Domain and TLS
 
-Point a domain at your instance's public IP, then edit `Caddyfile` and replace
-`jarvis.example.com`. Open ports 80 and 443 in both the Oracle security list *and*
-the instance firewall:
+Don't have a domain? **[docs/domain.md](docs/domain.md)** walks through getting a
+free DuckDNS one — about two minutes, no card. `scripts/setup.sh` writes it into
+the `Caddyfile` for you.
+
+Open ports 80 and 443 in both the Oracle security list *and* the instance
+firewall:
 
 ```bash
 sudo iptables -I INPUT -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT -p tcp --dport 443 -j ACCEPT
 sudo netfilter-persistent save
 ```
-
-Also set a real `secret_key` in `searxng/settings.yml`.
 
 ### 4. Launch
 
