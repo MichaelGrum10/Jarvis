@@ -1,0 +1,23 @@
+# Minimal SearXNG config for Jarvis. The JSON format is what the search tool reads;
+# it is off by default upstream, so it must be enabled explicitly here.
+use_default_settings: true
+
+server:
+  # Change this. Any random string; it only signs SearXNG's own sessions.
+  secret_key: "CHANGE_ME_TO_SOMETHING_RANDOM"
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  formats:
+    - html
+    - json
+
+engines:
+  - name: google
+    disabled: false
+  - name: duckduckgo
+    disabled: false
+  - name: wikipedia
+    disabled: false

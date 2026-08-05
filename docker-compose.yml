@@ -1,0 +1,49 @@
+services:
+  jarvis:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: jarvis
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Point search at the bundled SearXNG rather than scraping DuckDuckGo.
+      SEARXNG_URL: http://searxng:8080
+    volumes:
+      - jarvis-data:/data
+    ports:
+      # Bound to localhost: Caddy terminates TLS and proxies in. Never expose
+      # 8000 straight to the internet — the whole app is behind one password.
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      - searxng
+
+  searxng:
+    image: searxng/searxng:latest
+    container_name: jarvis-searxng
+    restart: unless-stopped
+    environment:
+      SEARXNG_BASE_URL: http://searxng:8080/
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: jarvis-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - jarvis
+
+volumes:
+  jarvis-data:
+  caddy-data:
+  caddy-config:

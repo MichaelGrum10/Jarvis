@@ -1,0 +1,32 @@
+# Secrets — never commit
+.env
+*.pem
+*.key
+
+# Data
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Bridge state
+.jarvis_bridge_state.json
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Caddy/searxng runtime
+caddy-data/
+searxng/uwsgi.ini

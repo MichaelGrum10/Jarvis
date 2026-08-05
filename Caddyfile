@@ -1,0 +1,29 @@
+# Replace jarvis.example.com with your domain (or Oracle public IP + a DNS name).
+# Caddy fetches and renews a Let's Encrypt certificate automatically — you need
+# HTTPS regardless of preference, because browsers refuse Geolocation and
+# service workers on plain HTTP.
+
+jarvis.example.com {
+	encode gzip
+
+	# SSE needs buffering off or tool activity arrives all at once at the end.
+	reverse_proxy jarvis:8000 {
+		flush_interval -1
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+}
+
+# No domain yet? Comment out the block above and uncomment this to get a
+# self-signed cert on the IP. Location will still work; you'll click through a warning.
+# :443 {
+# 	tls internal
+# 	reverse_proxy jarvis:8000 {
+# 		flush_interval -1
+# 	}
+# }

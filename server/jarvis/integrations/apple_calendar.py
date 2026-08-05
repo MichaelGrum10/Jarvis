@@ -1,0 +1,258 @@
+"""iCloud Calendar over CalDAV.
+
+Apple has no public calendar API, but iCloud speaks standard CalDAV at
+caldav.icloud.com using an app-specific password. That gives full read/create/
+delete against the same calendars your iPhone shows.
+
+The `caldav` library is synchronous, so every call runs in a worker thread.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import datetime as dt
+import logging
+import uuid
+from dataclasses import asdict, dataclass
+from zoneinfo import ZoneInfo
+
+import caldav
+from caldav.elements import dav
+from icalendar import Calendar as ICalendar
+from icalendar import Event as IEvent
+
+from ..config import Settings, get_settings
+
+log = logging.getLogger(__name__)
+
+
+@dataclass
+class CalEvent:
+    uid: str
+    summary: str
+    start: str
+    end: str
+    all_day: bool
+    location: str = ""
+    description: str = ""
+    calendar: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+class CalendarError(RuntimeError):
+    pass
+
+
+class AppleCalendar:
+    def __init__(self, settings: Settings | None = None) -> None:
+        self.settings = settings or get_settings()
+        self._principal = None
+        self._lock = asyncio.Lock()
+
+    # ---- connection -------------------------------------------------------
+
+    def _connect(self):
+        if self._principal is not None:
+            return self._principal
+        if not self.settings.caldav_user or not self.settings.caldav_pass:
+            raise CalendarError(
+                "iCloud calendar is not configured. Set CALDAV_USERNAME/CALDAV_PASSWORD "
+                "(or ICLOUD_EMAIL/ICLOUD_APP_PASSWORD) to an app-specific password."
+            )
+        client = caldav.DAVClient(
+            url=self.settings.caldav_url,
+            username=self.settings.caldav_user,
+            password=self.settings.caldav_pass,
+        )
+        self._principal = client.principal()
+        return self._principal
+
+    def _calendars(self) -> list:
+        cals = self._principal_calendars()
+        if not cals:
+            raise CalendarError("No writable calendars found on this iCloud account.")
+        return cals
+
+    def _principal_calendars(self) -> list:
+        principal = self._connect()
+        out = []
+        for cal in principal.calendars():
+            try:
+                # iCloud exposes read-only subscribed calendars too; keep only VEVENT ones.
+                comps = cal.get_supported_components()
+                if comps and "VEVENT" not in comps:
+                    continue
+            except Exception:
+                pass
+            out.append(cal)
+        return out
+
+    def _pick(self, name: str = ""):
+        wanted = (name or self.settings.default_calendar).strip().lower()
+        cals = self._calendars()
+        if wanted:
+            for cal in cals:
+                if self._name_of(cal).lower() == wanted:
+                    return cal
+            for cal in cals:
+                if wanted in self._name_of(cal).lower():
+                    return cal
+            raise CalendarError(
+                f"No calendar named '{name}'. Available: {', '.join(self._name_of(c) for c in cals)}"
+            )
+        return cals[0]
+
+    @staticmethod
+    def _name_of(cal) -> str:
+        try:
+            return str(cal.get_properties([dav.DisplayName()])[dav.DisplayName().tag] or cal.name)
+        except Exception:
+            return str(getattr(cal, "name", "") or "Calendar")
+
+    # ---- public async API -------------------------------------------------
+
+    async def list_calendars(self) -> list[str]:
+        return await asyncio.to_thread(
+            lambda: [self._name_of(c) for c in self._calendars()]
+        )
+
+    async def events_between(
+        self, start: dt.datetime, end: dt.datetime, calendar: str = ""
+    ) -> list[CalEvent]:
+        return await asyncio.to_thread(self._events_between, start, end, calendar)
+
+    def _events_between(self, start, end, calendar: str) -> list[CalEvent]:
+        cals = [self._pick(calendar)] if calendar else self._calendars()
+        found: list[CalEvent] = []
+        for cal in cals:
+            try:
+                results = cal.search(start=start, end=end, event=True, expand=True)
+            except Exception as exc:
+                log.warning("Search failed on calendar %s: %s", self._name_of(cal), exc)
+                continue
+            for item in results:
+                parsed = self._parse(item, self._name_of(cal))
+                if parsed:
+                    found.append(parsed)
+        found.sort(key=lambda e: e.start)
+        return found
+
+    def _parse(self, item, calendar_name: str) -> CalEvent | None:
+        try:
+            ical = ICalendar.from_ical(item.data)
+        except Exception:
+            return None
+        for comp in ical.walk("VEVENT"):
+            dtstart = comp.get("DTSTART")
+            dtend = comp.get("DTEND") or dtstart
+            if dtstart is None:
+                continue
+            start_val = dtstart.dt
+            end_val = dtend.dt if dtend is not None else start_val
+            all_day = not isinstance(start_val, dt.datetime)
+            return CalEvent(
+                uid=str(comp.get("UID", "")),
+                summary=str(comp.get("SUMMARY", "(no title)")),
+                start=self._iso(start_val),
+                end=self._iso(end_val),
+                all_day=all_day,
+                location=str(comp.get("LOCATION", "") or ""),
+                description=str(comp.get("DESCRIPTION", "") or ""),
+                calendar=calendar_name,
+            )
+        return None
+
+    def _iso(self, value) -> str:
+        if isinstance(value, dt.datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=ZoneInfo(self.settings.timezone))
+            return value.isoformat()
+        return value.isoformat()
+
+    async def create_event(
+        self,
+        summary: str,
+        start: dt.datetime,
+        end: dt.datetime,
+        *,
+        location: str = "",
+        description: str = "",
+        calendar: str = "",
+        alarm_minutes: int | None = None,
+    ) -> CalEvent:
+        return await asyncio.to_thread(
+            self._create_event, summary, start, end, location, description, calendar, alarm_minutes
+        )
+
+    def _create_event(
+        self, summary, start, end, location, description, calendar, alarm_minutes
+    ) -> CalEvent:
+        cal = self._pick(calendar)
+        tz = ZoneInfo(self.settings.timezone)
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=tz)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=tz)
+
+        uid = f"{uuid.uuid4()}@jarvis"
+        ical = ICalendar()
+        ical.add("prodid", "-//Jarvis//EN")
+        ical.add("version", "2.0")
+        event = IEvent()
+        event.add("uid", uid)
+        event.add("dtstamp", dt.datetime.now(dt.UTC))
+        event.add("dtstart", start)
+        event.add("dtend", end)
+        event.add("summary", summary)
+        if location:
+            event.add("location", location)
+        if description:
+            event.add("description", description)
+        if alarm_minutes:
+            from icalendar import Alarm
+
+            alarm = Alarm()
+            alarm.add("action", "DISPLAY")
+            alarm.add("description", summary)
+            alarm.add("trigger", dt.timedelta(minutes=-abs(alarm_minutes)))
+            event.add_component(alarm)
+        ical.add_component(event)
+
+        cal.save_event(ical.to_ical().decode())
+        return CalEvent(
+            uid=uid,
+            summary=summary,
+            start=start.isoformat(),
+            end=end.isoformat(),
+            all_day=False,
+            location=location,
+            description=description,
+            calendar=self._name_of(cal),
+        )
+
+    async def delete_event(self, uid: str, calendar: str = "") -> bool:
+        return await asyncio.to_thread(self._delete_event, uid, calendar)
+
+    def _delete_event(self, uid: str, calendar: str) -> bool:
+        cals = [self._pick(calendar)] if calendar else self._calendars()
+        for cal in cals:
+            try:
+                event = cal.event_by_uid(uid)
+            except Exception:
+                continue
+            if event is not None:
+                event.delete()
+                return True
+        raise CalendarError(f"No event with uid {uid} found.")
+
+
+_calendar: AppleCalendar | None = None
+
+
+def get_calendar() -> AppleCalendar:
+    global _calendar
+    if _calendar is None:
+        _calendar = AppleCalendar()
+    return _calendar
