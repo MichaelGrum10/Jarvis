@@ -96,11 +96,35 @@ class GroqClient:
                 wait = min(2**attempt, 8) + exc.retry_after
                 log.warning("Groq 429 on %s, retrying in %.1fs", candidate, wait)
                 await asyncio.sleep(wait)
+            except _TooLarge as exc:
+                # A request too large for this model will not shrink on retry, and
+                # the fallback model in the ladder has an even smaller token budget
+                # than the primary — so falling through to it here would just trade
+                # one guaranteed failure for another. Stop rather than cascade.
+                log.warning("Groq 413 on %s: %s", candidate, exc.detail)
+                raise LLMError(
+                    f"That request is too large for {candidate} ({exc.detail}). "
+                    "This usually happens when a conversation has grown long. "
+                    "Starting a new conversation, or waiting a minute for the "
+                    "main model's quota to reset, should fix it."
+                ) from None
         raise LLMError("Groq is rate-limiting every model. Try again in a minute.")
 
     def _model_ladder(self, primary: str) -> list[str]:
         fast = self.settings.groq_fast_model
         return [primary, primary, fast] if fast != primary else [primary, primary, primary]
+
+    @staticmethod
+    def _extract_message(resp: httpx.Response) -> str:
+        """Groq's error body is JSON with a nested message, plus marketing copy
+        ("Upgrade to Dev Tier...") that has no business reaching the end user.
+        Pull out just the useful sentence; fall back to raw text if parsing fails."""
+        try:
+            message = resp.json().get("error", {}).get("message", "")
+        except (ValueError, AttributeError):
+            message = ""
+        message = message.split("Need more tokens?")[0].strip()
+        return message or resp.text[:300]
 
     async def _request(
         self,
@@ -128,8 +152,10 @@ class GroqClient:
 
         if resp.status_code == 429:
             raise _RateLimited(float(resp.headers.get("retry-after", 1)))
+        if resp.status_code == 413:
+            raise _TooLarge(model, self._extract_message(resp))
         if resp.status_code >= 400:
-            raise LLMError(f"Groq {resp.status_code}: {resp.text[:400]}")
+            raise LLMError(f"Groq {resp.status_code}: {self._extract_message(resp)}")
 
         data = resp.json()
         choice = (data.get("choices") or [{}])[0]
@@ -147,6 +173,13 @@ class _RateLimited(Exception):
     def __init__(self, retry_after: float = 1.0) -> None:
         self.retry_after = max(0.0, min(retry_after, 10.0))
         super().__init__("rate limited")
+
+
+class _TooLarge(Exception):
+    def __init__(self, model: str, detail: str) -> None:
+        self.model = model
+        self.detail = detail
+        super().__init__(detail)
 
 
 _client: GroqClient | None = None
