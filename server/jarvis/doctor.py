@@ -1,0 +1,346 @@
+"""Self-diagnosis: check every credential and integration, on your own machine.
+
+    docker compose exec jarvis python -m jarvis.doctor
+    # or, outside docker:
+    python -m jarvis.doctor
+
+Prints a pass/fail line per integration with the specific fix for each failure.
+Secrets are masked in all output, so it is safe to copy the results into a chat
+or an issue when you want help — no credential ever appears.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import datetime as dt
+import sys
+
+from .config import get_settings
+
+GREEN, RED, YELLOW, DIM, BOLD, RESET = (
+    "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
+)
+
+PASS, FAIL, WARN = f"{GREEN}✓{RESET}", f"{RED}✗{RESET}", f"{YELLOW}!{RESET}"
+
+
+def mask(secret: str) -> str:
+    """Show enough to identify which credential it is, never enough to use it."""
+    if not secret:
+        return "(not set)"
+    if len(secret) <= 8:
+        return "*" * len(secret)
+    return f"{secret[:4]}…{secret[-2:]} ({len(secret)} chars)"
+
+
+class Report:
+    def __init__(self) -> None:
+        self.failures = 0
+        self.warnings = 0
+
+    def ok(self, label: str, detail: str = "") -> None:
+        print(f"  {PASS} {label}" + (f" {DIM}— {detail}{RESET}" if detail else ""))
+
+    def bad(self, label: str, problem: str, fix: str = "") -> None:
+        self.failures += 1
+        print(f"  {FAIL} {label} {DIM}— {problem}{RESET}")
+        if fix:
+            for line in fix.strip().splitlines():
+                print(f"      {YELLOW}→{RESET} {line.strip()}")
+
+    def warn(self, label: str, problem: str, fix: str = "") -> None:
+        self.warnings += 1
+        print(f"  {WARN} {label} {DIM}— {problem}{RESET}")
+        if fix:
+            for line in fix.strip().splitlines():
+                print(f"      {YELLOW}→{RESET} {line.strip()}")
+
+
+def _looks_like_app_password(value: str) -> bool:
+    """Apple's app-specific passwords are always four lowercase quads."""
+    import re
+
+    return bool(re.fullmatch(r"[a-z]{4}-[a-z]{4}-[a-z]{4}-[a-z]{4}", value or ""))
+
+
+def header(title: str) -> None:
+    print(f"\n{BOLD}{title}{RESET}")
+
+
+async def check_groq(report: Report) -> None:
+    header("Groq (chat + voice transcription)")
+    settings = get_settings()
+
+    if not settings.groq_api_key:
+        report.bad(
+            "API key", "GROQ_API_KEY is not set",
+            "Get a free key at https://console.groq.com/keys\n"
+            "Add it to .env, then: docker compose up -d",
+        )
+        return
+    if not settings.groq_api_key.startswith("gsk_"):
+        report.warn("API key format", f"{mask(settings.groq_api_key)} doesn't start with gsk_")
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                f"{settings.groq_base_url.rstrip('/')}/chat/completions",
+                headers={"Authorization": f"Bearer {settings.groq_api_key}"},
+                json={
+                    "model": settings.groq_model,
+                    "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+                    "max_tokens": 5,
+                },
+            )
+    except httpx.HTTPError as exc:
+        report.bad("Connection", str(exc), "Check the server has outbound internet access.")
+        return
+
+    if response.status_code == 401:
+        report.bad(
+            "Authentication", "Groq rejected the key",
+            "The key is wrong, revoked, or has a stray space.\n"
+            "Regenerate at https://console.groq.com/keys and re-run scripts/setup.sh",
+        )
+    elif response.status_code == 429:
+        report.warn("Rate limit", "key is valid but currently throttled — resets hourly")
+    elif response.status_code >= 400:
+        report.bad("API", f"HTTP {response.status_code}: {response.text[:160]}")
+    else:
+        reply = response.json()["choices"][0]["message"]["content"].strip()
+        report.ok("Chat model", f"{settings.groq_model} replied {reply!r}")
+        report.ok("Key", mask(settings.groq_api_key))
+
+
+async def check_mail(report: Report) -> None:
+    header("iCloud Mail (IMAP)")
+    settings = get_settings()
+
+    missing = settings.missing_for("mail")
+    if missing:
+        report.warn(
+            "Not configured", f"missing {', '.join(missing)}",
+            "Email tools stay hidden until this is set. See docs/setup.md step 3.",
+        )
+        return
+
+    password = settings.icloud_app_password
+    if not _looks_like_app_password(password):
+        report.warn(
+            "Password format", f"{mask(password)} isn't the xxxx-xxxx-xxxx-xxxx shape",
+            "iCloud only accepts an APP-SPECIFIC password here, not your Apple ID password.\n"
+            "Generate one at https://account.apple.com → Sign-In and Security",
+        )
+
+    def probe() -> tuple[bool, str, int]:
+        import imaplib
+
+        try:
+            conn = imaplib.IMAP4_SSL(settings.imap_host, settings.imap_port, timeout=25)
+        except (TimeoutError, OSError) as exc:
+            return False, f"cannot reach {settings.imap_host}: {exc}", 0
+        try:
+            conn.login(settings.icloud_email, password)
+        except imaplib.IMAP4.error as exc:
+            return False, f"login rejected: {exc}", 0
+        try:
+            status, data = conn.select("INBOX", readonly=True)
+            count = int(data[0]) if status == "OK" and data and data[0] else 0
+            return True, "", count
+        finally:
+            try:
+                conn.logout()
+            except Exception:
+                pass
+
+    ok, problem, count = await asyncio.to_thread(probe)
+    if ok:
+        report.ok("Login", f"{settings.icloud_email}")
+        report.ok("INBOX", f"{count} messages visible")
+    else:
+        report.bad(
+            "Login", problem,
+            "Use an app-specific password from https://account.apple.com,\n"
+            "not your Apple ID password. Revoke and regenerate if unsure.",
+        )
+
+
+async def check_calendar(report: Report) -> None:
+    header("iCloud Calendar (CalDAV)")
+    settings = get_settings()
+
+    missing = settings.missing_for("calendar")
+    if missing:
+        report.warn("Not configured", f"missing {', '.join(missing)}")
+        return
+
+    from .integrations.apple_calendar import CalendarError, get_calendar
+
+    try:
+        names = await get_calendar().list_calendars()
+    except CalendarError as exc:
+        report.bad("Connection", str(exc))
+        return
+    except Exception as exc:
+        report.bad(
+            "Connection", f"{type(exc).__name__}: {exc}",
+            "Confirm the same app-specific password works for Mail above.",
+        )
+        return
+
+    if not names:
+        report.warn(
+            "Calendars", "connected, but no writable calendars found",
+            "iCloud hides calendars not owned by the authenticated account.",
+        )
+        return
+
+    report.ok("Login", settings.caldav_user)
+    report.ok("Calendars", ", ".join(names[:6]) + ("…" if len(names) > 6 else ""))
+
+    now = dt.datetime.now(dt.UTC)
+    try:
+        events = await get_calendar().events_between(now, now + dt.timedelta(days=7))
+        report.ok("Read test", f"{len(events)} events in the next 7 days")
+    except Exception as exc:
+        report.warn("Read test", f"{type(exc).__name__}: {exc}")
+
+
+async def check_messages(report: Report) -> None:
+    header("Messages bridge (iMessage)")
+    settings = get_settings()
+
+    if settings.missing_for("messages"):
+        report.warn(
+            "Not configured", "BRIDGE_TOKEN is not set",
+            "Only needed if you have a Mac to mirror iMessage. See docs/messages-bridge.md",
+        )
+        return
+
+    from sqlalchemy import func, select
+
+    from .db import BridgeHeartbeat, ChatMessage, init_db, session_scope, utcnow
+
+    await init_db()
+    async with session_scope() as session:
+        beat = (await session.execute(select(BridgeHeartbeat).limit(1))).scalar_one_or_none()
+        total = (await session.execute(select(func.count(ChatMessage.id)))).scalar() or 0
+
+    if beat is None:
+        report.warn(
+            "Bridge", "has never connected",
+            "On your Mac: python3 bridge/jarvis_bridge.py\n"
+            "Needs Full Disk Access — see docs/messages-bridge.md",
+        )
+        return
+
+    minutes = (utcnow() - beat.last_seen).total_seconds() / 60
+    if minutes > settings.bridge_stale_minutes:
+        report.warn(
+            "Bridge", f"last seen {int(minutes)} minutes ago on {beat.hostname or 'unknown host'}",
+            "The Mac may be asleep or the bridge stopped.\n"
+            "Check: launchctl list | grep jarvis",
+        )
+    else:
+        report.ok("Bridge", f"{beat.hostname}, {int(minutes)}m ago")
+    report.ok("Mirrored messages", str(total))
+
+
+async def check_outbound(report: Report) -> None:
+    header("Outbound APIs (no credentials needed)")
+    import httpx
+
+    targets = [
+        ("Yahoo Finance", "https://query2.finance.yahoo.com/v8/finance/chart/AAPL"),
+        ("WSJ feed", "https://feeds.content.dowjones.io/public/rss/RSSMarketsMain"),
+        ("OpenStreetMap", "https://nominatim.openstreetmap.org/status"),
+    ]
+    settings = get_settings()
+
+    async with httpx.AsyncClient(
+        timeout=20.0, follow_redirects=True, headers={"User-Agent": settings.user_agent}
+    ) as client:
+        for name, url in targets:
+            try:
+                response = await client.get(url)
+                if response.status_code < 400:
+                    report.ok(name, f"HTTP {response.status_code}")
+                else:
+                    report.warn(name, f"HTTP {response.status_code}")
+            except httpx.HTTPError as exc:
+                report.warn(name, f"unreachable: {type(exc).__name__}")
+
+    if settings.searxng_url:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(
+                    f"{settings.searxng_url.rstrip('/')}/search",
+                    params={"q": "test", "format": "json"},
+                )
+            if response.status_code < 400:
+                report.ok("SearXNG", settings.searxng_url)
+            else:
+                report.warn(
+                    "SearXNG", f"HTTP {response.status_code}",
+                    "Ensure 'json' is listed under search.formats in searxng/settings.yml",
+                )
+        except httpx.HTTPError as exc:
+            report.warn("SearXNG", f"unreachable: {exc}")
+    else:
+        report.warn("SearXNG", "not configured — falling back to DuckDuckGo scraping")
+
+
+def check_config(report: Report) -> None:
+    header("Configuration")
+    settings = get_settings()
+
+    if settings.missing_for("auth"):
+        report.bad(
+            "Auth", f"missing {', '.join(settings.missing_for('auth'))}",
+            "Run: bash scripts/setup.sh",
+        )
+    else:
+        report.ok("Auth secret", mask(settings.auth_secret))
+        report.ok("Access password", mask(settings.access_password))
+
+    report.ok("Owner", settings.owner_name or "(not set)")
+    report.ok("Timezone", settings.timezone)
+    report.ok("Database", str(settings.db_path))
+
+    if settings.autonomy_enabled:
+        report.warn("Autonomy", "ENABLED — Jarvis may modify its own source")
+    else:
+        report.ok("Autonomy", "disabled")
+
+
+async def main() -> int:
+    print(f"{BOLD}Jarvis doctor{RESET}")
+    print(f"{DIM}Secrets are masked below — output is safe to share.{RESET}")
+
+    report = Report()
+    check_config(report)
+    await check_groq(report)
+    await check_mail(report)
+    await check_calendar(report)
+    await check_messages(report)
+    await check_outbound(report)
+
+    print()
+    if report.failures:
+        print(f"{RED}{report.failures} problem(s) need fixing{RESET}", end="")
+        print(f", {report.warnings} warning(s)" if report.warnings else "")
+        return 1
+    if report.warnings:
+        print(f"{YELLOW}All required checks passed, {report.warnings} optional item(s) unconfigured{RESET}")
+        return 0
+    print(f"{GREEN}Everything checks out.{RESET}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(asyncio.run(main()))
+    except KeyboardInterrupt:
+        sys.exit(130)

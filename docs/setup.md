@@ -118,6 +118,18 @@ See [autonomy.md](autonomy.md). Set `AUTONOMY_ENABLED=true` and restart.
 ## Verifying
 
 ```bash
+docker compose exec jarvis python -m jarvis.doctor
+```
+
+This is the one to run first. It actually exercises each credential — logs into
+iCloud IMAP, calls Groq, lists your calendars, checks the bridge heartbeat and
+the outbound APIs — and prints the specific fix for whatever fails. Every secret
+is masked, so you can paste the output anywhere for help without exposing
+anything.
+
+For a quick liveness check instead:
+
+```bash
 curl https://your-domain.com/api/health
 ```
 

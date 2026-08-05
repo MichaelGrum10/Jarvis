@@ -117,6 +117,17 @@ docker compose up -d
 docker compose logs -f jarvis
 ```
 
+Then check everything connected:
+
+```bash
+docker compose exec jarvis python -m jarvis.doctor
+```
+
+It tests each credential for real — logs into iCloud, calls Groq, lists your
+calendars — and names the specific fix for anything broken. **Secrets are masked
+in its output**, so the result is safe to paste into an issue or a chat when you
+want a hand.
+
 Visit your domain, enter `ACCESS_PASSWORD`, and on iOS tap Share → **Add to Home
 Screen**. It installs as a real app: own icon, no browser chrome, remembers the
 device token.
@@ -243,6 +254,13 @@ bridge/            Mac iMessage bridge (stdlib only)
 ## Security
 
 One password guards everything, so treat it like a house key.
+
+**Credentials only ever go into `.env` on your own server.** `scripts/setup.sh`
+prompts for them there; `.env` is gitignored and written `600`. Nothing needs to
+be sent anywhere else — and if a credential does end up somewhere it shouldn't,
+both the Groq key and the Apple app-specific password are revocable in seconds
+from their respective dashboards, with no effect on the rest of your account.
+`jarvis.doctor` masks every secret it prints for the same reason.
 
 - Device tokens are signed and expire after 90 days; rotating `AUTH_SECRET`
   revokes every device instantly
