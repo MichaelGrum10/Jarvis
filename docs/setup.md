@@ -148,6 +148,18 @@ you exactly which variable to fill in.
 
 ## Troubleshooting
 
+**Domain won't load, or hangs forever?** Run this first — it walks the chain from
+DNS through both firewalls to the certificate, and names the first thing actually
+broken:
+
+```bash
+cd ~/Jarvis && bash scripts/diagnose.sh
+```
+
+A page that hangs rather than erroring almost always means packets are being
+dropped, which points at the Oracle Cloud security list rather than anything on
+the server.
+
 **Certificate won't issue.** Port 80 must be reachable from outside — check *both*
 the Oracle security list and local iptables. `docker compose logs caddy` names the
 specific failure.
