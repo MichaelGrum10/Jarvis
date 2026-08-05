@@ -82,7 +82,7 @@ Typing long commands on glass is miserable, so this is one paste.
 Copy this, paste into Termius, hit return:
 
 ```
-sudo apt-get update -qq && sudo apt-get install -y -qq git && git clone -b claude/jarvis-ai-assistant-9tlgu3 https://github.com/MichaelGrum10/Jarvis.git ~/Jarvis && bash ~/Jarvis/scripts/bootstrap.sh
+sudo apt-get update -qq && sudo apt-get install -y -qq git && { [ -d ~/Jarvis/.git ] || git clone -b claude/jarvis-ai-assistant-9tlgu3 https://github.com/MichaelGrum10/Jarvis.git ~/Jarvis; } && bash ~/Jarvis/scripts/bootstrap.sh
 ```
 
 **Git will ask you to sign in**, because the repo is private:
@@ -96,6 +96,17 @@ phone, and covers making the repo public instead if you'd prefer.
 
 It then installs Docker, opens the firewall, and pauses to let you set up the
 domain.
+
+**Already started once?** Don't re-run the clone — it will refuse because the
+directory exists. Resume with:
+
+```
+cd ~/Jarvis && git pull && bash scripts/bootstrap.sh
+```
+
+Your `.env` is left alone, so press Enter at each prompt to keep what you already
+entered.
+
 
 ---
 

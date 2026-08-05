@@ -79,15 +79,31 @@ warn "  source 0.0.0.0/0, TCP ports 80 and 443. Both layers are required."
 # ---------------------------------------------------------------- clone
 bold "3/5  Fetching Jarvis"
 if [ -d "$TARGET/.git" ]; then
-  git -C "$TARGET" fetch --quiet origin "$BRANCH"
-  git -C "$TARGET" checkout --quiet "$BRANCH"
-  git -C "$TARGET" pull --quiet origin "$BRANCH"
-  green "✓ Updated existing checkout at $TARGET"
+  # Resuming. setup.sh writes your domain into the Caddyfile, so a local diff
+  # here is expected and must not abort the run — an un-fast-forwardable pull is
+  # a reason to carry on with what's on disk, not to stop halfway through setup.
+  if ! git -C "$TARGET" fetch --quiet origin "$BRANCH" 2>/dev/null; then
+    warn "! Couldn't reach GitHub. Continuing with the local copy."
+  elif ! git -C "$TARGET" merge --ff-only --quiet "origin/$BRANCH" 2>/dev/null; then
+    warn "! Local edits (your Caddyfile domain, most likely) block a clean update."
+    warn "  Continuing with the version already on disk — that's fine for setup."
+    warn "  To take the newest code later: cd $TARGET && git stash && git pull"
+  else
+    green "✓ Updated to the latest version"
+  fi
+  green "✓ Using existing checkout at $TARGET"
+elif [ -e "$TARGET" ]; then
+  fail "$TARGET exists but isn't a git checkout. Move it aside and re-run:
+    mv $TARGET ${TARGET}.old"
 else
   git clone --quiet --branch "$BRANCH" "$REPO" "$TARGET"
   green "✓ Cloned to $TARGET"
 fi
 cd "$TARGET"
+
+if [ -f .env ]; then
+  green "✓ Found existing .env — press Enter at each prompt to keep those values"
+fi
 
 # ---------------------------------------------------------------- ip / domain
 bold "4/5  Your server address"

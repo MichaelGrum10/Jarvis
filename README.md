@@ -76,10 +76,13 @@ On your Oracle Cloud instance (Ubuntu 22.04+, the free ARM shape is plenty):
 
 ```bash
 sudo apt-get update -qq && sudo apt-get install -y -qq git && \
-git clone -b claude/jarvis-ai-assistant-9tlgu3 \
-  https://github.com/MichaelGrum10/Jarvis.git ~/Jarvis && \
+{ [ -d ~/Jarvis/.git ] || git clone -b claude/jarvis-ai-assistant-9tlgu3 \
+  https://github.com/MichaelGrum10/Jarvis.git ~/Jarvis; } && \
 bash ~/Jarvis/scripts/bootstrap.sh
 ```
+
+Interrupted partway? Re-run the same command — it picks up where it stopped and
+keeps any credentials you already entered.
 
 Git will ask for your GitHub username and a personal access token as the
 password — this repo is private, so an unauthenticated download can't work. See
