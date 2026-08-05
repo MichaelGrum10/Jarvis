@@ -8,6 +8,8 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
+import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js';
+
 const API = '';
 const store = {
   get token() { return localStorage.getItem('jarvis_token'); },
@@ -20,6 +22,12 @@ let conversationId = null;
 let location_ = null;
 let sending = false;
 let commandTimer = null;
+
+/* Phones start in text mode, desktops start in voice mode, and the mode button
+ * switches either way — the choice persists per device. */
+let mode = defaultMode();
+let listener = null;
+const speaker = new Speaker();
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -83,6 +91,9 @@ async function enterApp() {
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   $('status-dot').classList.add('on');
+  if (!voiceSupport.any && mode === 'voice') mode = 'text';
+  applyMode();
+  $('voice-hint').textContent = tapHint();
   loadConversations();
   requestLocation(true);
   commandTimer = setInterval(pollCommands, 4000);
@@ -247,7 +258,9 @@ async function send(text) {
 
     typing.remove();
     if (displays.length) renderDisplays(displays);
-    addMessage('assistant', finalText || 'No response.');
+    const reply = finalText || 'No response.';
+    addMessage('assistant', reply);
+    if (mode === 'voice') speakReply(reply);
     loadConversations();
   } catch (err) {
     typing.remove();
@@ -503,6 +516,90 @@ async function loadRuns() {
   } catch { /* autonomy may be off */ }
 }
 
+/* ---------------- voice ---------------- */
+
+function applyMode() {
+  const voice = mode === 'voice';
+  $('voice-panel').classList.toggle('hidden', !voice);
+  $('composer').classList.toggle('hidden', voice);
+  $('mode-btn').textContent = voice ? '⌨' : '🎙';
+  $('mode-btn').title = voice ? 'Switch to typing' : 'Switch to voice';
+  // Dictation is available in text mode too — it just doesn't take over the screen.
+  $('mic-btn').classList.toggle('hidden', !voiceSupport.any);
+  if (!voice) { stopListening(); speaker.cancel(); }
+}
+
+function setMode(next) {
+  mode = next;
+  saveMode(next);
+  applyMode();
+}
+
+function speakReply(text) {
+  $('voice-stop').classList.remove('hidden');
+  speaker.speak(text, {
+    onEnd: () => $('voice-stop').classList.add('hidden'),
+  });
+}
+
+function makeListener({ intoComposer }) {
+  return new Listener({
+    onStart: () => {
+      $('voice-orb').classList.add('listening');
+      $('voice-hint').textContent = 'Listening… tap to stop';
+      $('mic-btn').classList.add('active');
+    },
+    onInterim: (text) => {
+      if (intoComposer) {
+        $('input').value = text;
+      } else {
+        $('voice-transcript').textContent = text;
+      }
+    },
+    onFinal: (text) => {
+      if (!text.trim()) return;
+      if (intoComposer) {
+        $('input').value = text;
+        $('input').focus();
+      } else {
+        $('voice-transcript').textContent = '';
+        send(text);
+      }
+    },
+    onError: (message) => {
+      $('voice-hint').textContent = message;
+      setTimeout(() => { $('voice-hint').textContent = tapHint(); }, 4000);
+    },
+    onStop: () => {
+      $('voice-orb').classList.remove('listening');
+      $('mic-btn').classList.remove('active');
+      $('voice-hint').textContent = tapHint();
+    },
+  });
+}
+
+function tapHint() {
+  if (!voiceSupport.any) return 'Speech is not available in this browser.';
+  return listener?.mode === 'whisper' ? 'Tap to record, tap again to send' : 'Tap to speak';
+}
+
+function startListening({ intoComposer = false } = {}) {
+  // Barge-in: if Jarvis is mid-sentence, talking over it should cut it off.
+  speaker.cancel();
+  $('voice-stop').classList.add('hidden');
+  listener = makeListener({ intoComposer });
+  listener.start({ continuous: !intoComposer && !isMobile() });
+}
+
+function stopListening() {
+  listener?.stop();
+}
+
+function toggleListening(options) {
+  if (listener?.active) stopListening();
+  else startListening(options);
+}
+
 /* ---------------- drawer ---------------- */
 
 const openDrawer = () => { $('drawer').classList.add('open'); $('scrim').classList.add('on'); };
@@ -513,6 +610,12 @@ const closeDrawer = () => { $('drawer').classList.remove('open'); $('scrim').cla
 $('login-btn').onclick = signIn;
 $('password').onkeydown = (e) => { if (e.key === 'Enter') signIn(); };
 $('label').onkeydown = (e) => { if (e.key === 'Enter') signIn(); };
+
+$('mode-btn').onclick = () => setMode(mode === 'voice' ? 'text' : 'voice');
+$('voice-orb').onclick = () => toggleListening();
+$('voice-to-text').onclick = () => setMode('text');
+$('voice-stop').onclick = () => { speaker.cancel(); $('voice-stop').classList.add('hidden'); };
+$('mic-btn').onclick = () => toggleListening({ intoComposer: true });
 
 $('menu-btn').onclick = openDrawer;
 $('drawer-close').onclick = closeDrawer;

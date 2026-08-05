@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     groq_fast_model: str = "llama-3.1-8b-instant"
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.3
+    # Whisper on Groq: free with the same key, and better than the browser engines.
+    whisper_model: str = "whisper-large-v3-turbo"
 
     # --- apple: icloud mail over imap ---
     # Use an app-specific password from appleid.apple.com, NOT your Apple ID password.

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import auth, autonomy, bridge, chat, device
+from .api import auth, autonomy, bridge, chat, device, voice
 from .config import get_settings
 from .db import init_db
 from .llm.client import get_llm
@@ -58,6 +58,7 @@ app.include_router(chat.router)
 app.include_router(device.router)
 app.include_router(bridge.router)
 app.include_router(autonomy.router)
+app.include_router(voice.router)
 
 
 @app.get("/api/health")

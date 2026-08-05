@@ -92,6 +92,9 @@ makes "near me" follow you as you travel.
 Do the same on any other device; each gets its own token, all revocable at once by
 rotating `AUTH_SECRET`.
 
+Voice works out of the box on that same HTTPS — see [voice.md](voice.md). Desktops
+open in voice mode, phones in text mode, and the top-bar button switches either way.
+
 ## 5. Messages bridge (optional, needs a Mac)
 
 See [messages-bridge.md](messages-bridge.md).
@@ -135,6 +138,9 @@ reports which ones it can see.
 
 **Location button does nothing.** Only works over HTTPS. On iOS also check
 Settings → Privacy → Location Services → Safari.
+
+**Microphone does nothing.** Same cause — browsers require HTTPS for the mic. On
+iOS also check Settings → Safari → Microphone.
 
 **Rate limited by Groq.** The free tier is generous but finite. The client already
 retries with backoff and falls back to `llama-3.1-8b-instant`, which has a separate

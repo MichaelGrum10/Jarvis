@@ -34,6 +34,7 @@
       <span>Jarvis</span>
     </div>
     <div class="topbar-actions">
+      <button id="mode-btn" class="icon-btn" aria-label="Switch between voice and text" title="Switch mode">⌨</button>
       <button id="loc-btn" class="icon-btn" aria-label="Share location" title="Share location">◎</button>
       <button id="new-btn" class="icon-btn" aria-label="New conversation">＋</button>
     </div>
@@ -68,7 +69,21 @@
     </div>
   </main>
 
+  <div id="voice-panel" class="voice-panel hidden">
+    <div id="voice-transcript" class="voice-transcript"></div>
+    <button id="voice-orb" class="voice-orb" aria-label="Hold to speak">
+      <span class="orb-ring"></span>
+      <span class="orb-icon">🎙</span>
+    </button>
+    <div id="voice-hint" class="voice-hint">Tap to speak</div>
+    <div class="voice-actions">
+      <button id="voice-stop" class="ghost-btn hidden">■ Stop speaking</button>
+      <button id="voice-to-text" class="ghost-btn">⌨ Type instead</button>
+    </div>
+  </div>
+
   <form id="composer" class="composer">
+    <button id="mic-btn" type="button" class="icon-btn mic" aria-label="Dictate">🎙</button>
     <textarea id="input" rows="1" placeholder="Ask Jarvis…" autocomplete="off"></textarea>
     <button id="send" type="submit" aria-label="Send">↑</button>
   </form>
@@ -84,6 +99,6 @@
   </div>
 </div>
 
-<script src="/static/app.js"></script>
+<script type="module" src="/static/app.js"></script>
 </body>
 </html>
