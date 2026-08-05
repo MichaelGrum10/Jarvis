@@ -115,3 +115,43 @@ def test_index_serves_the_app(client):
     res = client.get("/")
     assert res.status_code == 200
     assert "Jarvis" in res.text
+
+
+def test_shortcut_style_minimal_payload_accepted(client):
+    """An iOS Shortcut can't supply a chat.db GUID or a formatted timestamp, so
+    the endpoint must accept just a sender and some text."""
+    headers = {"X-Bridge-Token": "test-bridge-token"}
+    payload = {
+        "hostname": "iPhone",
+        "messages": [{"sender": "+15559998888", "text": "running late, start without me"}],
+    }
+    res = client.post("/api/bridge/ingest", json=payload, headers=headers)
+    assert res.status_code == 200
+    assert res.json()["stored"] == 1
+
+    # Firing twice for one message must not duplicate it.
+    again = client.post("/api/bridge/ingest", json=payload, headers=headers)
+    assert again.json()["stored"] == 0
+
+
+def test_derived_guids_distinguish_different_senders(client):
+    headers = {"X-Bridge-Token": "test-bridge-token"}
+    body = lambda sender: {  # noqa: E731
+        "messages": [{"sender": sender, "text": "same words"}]
+    }
+    first = client.post("/api/bridge/ingest", json=body("+15550000001"), headers=headers)
+    second = client.post("/api/bridge/ingest", json=body("+15550000002"), headers=headers)
+    assert first.json()["stored"] == 1
+    assert second.json()["stored"] == 1
+
+
+def test_explicit_guid_still_wins(client):
+    """The Mac bridge's real GUIDs must keep taking precedence over derived ones."""
+    headers = {"X-Bridge-Token": "test-bridge-token"}
+    payload = {
+        "messages": [
+            {"guid": "real-chatdb-guid-42", "sender": "+15551112222", "text": "hello"}
+        ]
+    }
+    assert client.post("/api/bridge/ingest", json=payload, headers=headers).json()["stored"] == 1
+    assert client.post("/api/bridge/ingest", json=payload, headers=headers).json()["stored"] == 0

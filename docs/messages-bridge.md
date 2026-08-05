@@ -149,7 +149,7 @@ Everything else works unchanged. The three `messages_*` tools stay hidden from t
 model, so Jarvis simply won't claim it can read your texts. `system_status` will
 report Messages as unconfigured.
 
-A partial alternative: an Apple Shortcut on your iPhone, triggered by a Messages
-automation, can POST incoming texts to the ingest endpoint. That gets you inbound
-messages without a Mac, but iOS won't let a Shortcut send iMessages unattended, so
-replies still need a tap.
+A partial alternative: an Apple Shortcut on your iPhone can forward new incoming
+messages to the ingest endpoint. No history, and iOS won't send replies
+unattended — but Jarvis at least knows what's arriving. Full walkthrough in
+[iphone-messages.md](iphone-messages.md).

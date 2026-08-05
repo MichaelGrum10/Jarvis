@@ -36,13 +36,20 @@ means dropping a file in `server/jarvis/tools/`.
 
 Three things about the request are worth being straight about up front.
 
-**iMessage cannot be read from a Linux server.** Apple ships no server API for
-Messages, and no amount of credentials changes that. The only supported path is a
-Mac you own: `bridge/jarvis_bridge.py` reads the local `chat.db` and mirrors
-messages to your server. If you have a Mac (or a Mac mini left powered on), this
-works properly and sends replies too. If you don't, every other feature still
-works — the messages tools just stay hidden. **This is the one capability with a
-hardware prerequisite.**
+**iMessage cannot be read from a Linux server, or from an iPhone.** Apple ships
+no server API for Messages, and iOS sandboxes `chat.db` beyond the reach of any
+app or Shortcut. The only path to your message history is a Mac you own:
+`bridge/jarvis_bridge.py` reads the local `chat.db` and mirrors messages up, and
+sends replies back out.
+
+The Mac doesn't need to run continuously — start it whenever, and the bridge picks
+up from where it stopped. Meanwhile every other feature works normally and the
+messages tools stay hidden, so Jarvis won't claim it can see your texts.
+
+Without a Mac at all, an iPhone Shortcut can forward *new incoming* messages —
+no history, and it can't send replies. See
+[docs/iphone-messages.md](docs/iphone-messages.md). **This is the one capability
+with a hardware prerequisite.**
 
 **WSJ headlines come from their public feeds, not your account.** The Journal
 publishes free RSS for every section with headlines and summaries, and that's what
@@ -143,6 +150,9 @@ python3 bridge/jarvis_bridge.py
 ```
 
 Grant Full Disk Access to Terminal first, or it can't read `chat.db`.
+
+No Mac available? [docs/iphone-messages.md](docs/iphone-messages.md) covers the
+partial iPhone route and is explicit about what it can't do.
 
 ---
 
