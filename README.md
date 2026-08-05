@@ -23,7 +23,8 @@ anywhere in the stack.
 | **Web search + page reading** | SearXNG → Brave → DuckDuckGo | free |
 | **Nearby places** — "I need a haircut" | OpenStreetMap, using *device* location | free, no key |
 | **Open apps on your device** | URL schemes + Apple Shortcuts | free |
-| **Voice** — speak to it, hear it back | Web Speech API + Groq Whisper fallback | free |
+| **Voice** — HUD, wake word, speaks back | Web Speech API + Groq Whisper | free |
+| **Voice identity** — answers only you | MFCC voiceprint, alerts on strangers | free |
 | **Memory** | SQLite, injected into every prompt | free |
 | **Self-improvement** | Sandboxed agent that edits its own code and runs tests | free |
 
@@ -205,9 +206,17 @@ In voice mode you tap the orb, talk, and hear the answer back; tapping again whi
 it's speaking cuts it off and starts listening. In text mode you type, but the 🎙
 button still dictates into the composer when you'd rather not.
 
-Recognition uses the browser's own engine where it exists and falls back to Groq's
-Whisper everywhere else. Speech out is the browser's synthesiser, so no audio ever
-leaves your device on the way out. Details in [docs/voice.md](docs/voice.md).
+Voice mode is a full-screen HUD — no transcript, no composer. The ring carries
+the state: cyan while listening, **amber and pulsing while it works**, bright
+while speaking. Say **"Jarvis"** to start hands-free, or tap the ring. Jarvis
+answers in the closest British voice your device has.
+
+It can also answer only *you*: enrol your voice, and other speakers are refused
+with an alert pushed to every device. Be clear about what that is, though — a
+recording of you will pass it, so it's a filter against other people in the room,
+not the thing keeping strangers out. Measured error rates and the reasoning are
+in [docs/voice-identity.md](docs/voice-identity.md); the basics are in
+[docs/voice.md](docs/voice.md).
 
 ---
 

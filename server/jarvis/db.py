@@ -7,7 +7,16 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, select
+from sqlalchemy import (
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    select,
+)
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -128,6 +137,33 @@ class BridgeHeartbeat(Base):
     hostname: Mapped[str] = mapped_column(String(120), default="")
     version: Mapped[str] = mapped_column(String(40), default="")
     last_seen: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class SpeakerProfile(Base):
+    """Enrolled voiceprint for the owner. One row; re-enrolling replaces it."""
+
+    __tablename__ = "speaker_profiles"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    label: Mapped[str] = mapped_column(String(80), default="owner")
+    vectors: Mapped[bytes] = mapped_column(LargeBinary)
+    sample_count: Mapped[int] = mapped_column(Integer, default=0)
+    cohesion: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class VoiceAlert(Base):
+    """An utterance that failed speaker verification, kept so you can review what
+    was said and decide whether it was a stranger or just a bad match on you."""
+
+    __tablename__ = "voice_alerts"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    device_id: Mapped[str] = mapped_column(String(64), default="", index=True)
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    threshold: Mapped[float] = mapped_column(Float, default=0.0)
+    transcript: Mapped[str] = mapped_column(Text, default="")
+    acknowledged: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
 class AutonomyRun(Base):

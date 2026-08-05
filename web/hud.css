@@ -1,0 +1,204 @@
+/* The HUD voice interface.
+ *
+ * Deliberately text-free while listening: in voice mode the transcript is noise,
+ * not information — you already know what you said. State is carried entirely by
+ * the ring's colour and motion, so a glance tells you whether it's idle,
+ * listening, thinking or speaking without reading anything.
+ */
+
+:root {
+  --hud-cyan: #4fd6f7;
+  --hud-cyan-dim: #1c6d85;
+  --hud-blue: #2b8fd8;
+  --hud-amber: #ffb454;
+  --hud-red: #ff5f56;
+  --hud-glow: rgba(79, 214, 247, 0.55);
+}
+
+.hud {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  background:
+    radial-gradient(circle at 50% 45%, #0d2230 0%, #060d14 55%, #03070b 100%);
+  padding: calc(var(--safe-t) + 16px) 16px calc(var(--safe-b) + 16px);
+}
+
+/* Faint schematic grid, as in the reference. Pure CSS so there's no image to load. */
+.hud::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(79, 214, 247, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(79, 214, 247, 0.045) 1px, transparent 1px);
+  background-size: 42px 42px;
+  mask-image: radial-gradient(circle at 50% 45%, #000 20%, transparent 78%);
+  -webkit-mask-image: radial-gradient(circle at 50% 45%, #000 20%, transparent 78%);
+  pointer-events: none;
+}
+
+.hud-stage {
+  position: relative;
+  width: min(78vw, 340px);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.hud-ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.hud-ring circle,
+.hud-ring path { fill: none; stroke-linecap: round; }
+
+.ring-track    { stroke: rgba(79, 214, 247, 0.14); stroke-width: 1.5; }
+.ring-ticks    { stroke: rgba(79, 214, 247, 0.42); stroke-width: 1.4; }
+.ring-outer    { stroke: rgba(79, 214, 247, 0.30); stroke-width: 1; }
+.ring-sweep    { stroke: var(--hud-cyan); stroke-width: 2.6; filter: drop-shadow(0 0 6px var(--hud-glow)); }
+.ring-accent   { stroke: var(--hud-amber); stroke-width: 3; opacity: 0.9; }
+
+/* Counter-rotating rings. Speeds differ per state via --spin. */
+.spin-slow    { animation: hud-spin var(--spin, 44s) linear infinite; transform-origin: 50% 50%; }
+.spin-reverse { animation: hud-spin var(--spin-r, 30s) linear infinite reverse; transform-origin: 50% 50%; }
+
+@keyframes hud-spin { to { transform: rotate(360deg); } }
+
+/* ---------- core ---------- */
+
+.hud-core {
+  position: relative;
+  width: 46%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle, rgba(79, 214, 247, 0.20) 0%, rgba(10, 30, 42, 0.85) 70%);
+  border: 1px solid rgba(79, 214, 247, 0.35);
+  box-shadow: 0 0 30px rgba(79, 214, 247, 0.18), inset 0 0 26px rgba(79, 214, 247, 0.12);
+  transition: box-shadow .3s, border-color .3s, transform .2s;
+}
+
+.hud-label {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: clamp(13px, 3.6vw, 19px);
+  letter-spacing: 0.30em;
+  text-indent: 0.30em;      /* letter-spacing pads the right; recentre the text */
+  color: var(--hud-cyan);
+  text-shadow: 0 0 12px var(--hud-glow);
+  user-select: none;
+}
+
+.hud-status {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(79, 214, 247, 0.6);
+  min-height: 1.2em;
+  text-align: center;
+}
+
+/* ---------- states ----------
+ * idle      — slow drift, dim
+ * listening — cyan, gentle breathing, faster sweep
+ * thinking  — the pulse; amber, urgent
+ * speaking  — bright, steady bloom in time with speech
+ * denied    — red, for a voice that didn't match
+ */
+
+.hud[data-state='listening'] .hud-core {
+  border-color: rgba(79, 214, 247, 0.75);
+  box-shadow: 0 0 48px rgba(79, 214, 247, 0.42), inset 0 0 34px rgba(79, 214, 247, 0.22);
+  animation: hud-breathe 2.6s ease-in-out infinite;
+}
+.hud[data-state='listening'] .hud-ring { --spin: 18s; --spin-r: 12s; }
+
+.hud[data-state='thinking'] .hud-core {
+  border-color: rgba(255, 180, 84, 0.8);
+  background: radial-gradient(circle, rgba(255, 180, 84, 0.22) 0%, rgba(38, 26, 12, 0.85) 70%);
+  animation: hud-pulse 0.85s ease-in-out infinite;
+}
+.hud[data-state='thinking'] .hud-label { color: var(--hud-amber); text-shadow: 0 0 14px rgba(255,180,84,.6); }
+.hud[data-state='thinking'] .ring-sweep { stroke: var(--hud-amber); filter: drop-shadow(0 0 8px rgba(255,180,84,.6)); }
+.hud[data-state='thinking'] .hud-ring { --spin: 6s; --spin-r: 4s; }
+
+.hud[data-state='speaking'] .hud-core {
+  border-color: rgba(120, 230, 255, 0.9);
+  box-shadow: 0 0 60px rgba(79, 214, 247, 0.55), inset 0 0 40px rgba(79, 214, 247, 0.3);
+  animation: hud-breathe 1.1s ease-in-out infinite;
+}
+.hud[data-state='speaking'] .hud-ring { --spin: 26s; --spin-r: 18s; }
+
+.hud[data-state='denied'] .hud-core {
+  border-color: rgba(255, 95, 86, 0.85);
+  background: radial-gradient(circle, rgba(255, 95, 86, 0.22) 0%, rgba(40, 14, 12, 0.9) 70%);
+  animation: hud-shake 0.45s ease-in-out 2;
+}
+.hud[data-state='denied'] .hud-label { color: var(--hud-red); text-shadow: 0 0 14px rgba(255,95,86,.6); }
+.hud[data-state='denied'] .ring-sweep { stroke: var(--hud-red); }
+
+@keyframes hud-breathe {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.045); }
+}
+@keyframes hud-pulse {
+  0%, 100% { transform: scale(1);    box-shadow: 0 0 26px rgba(255,180,84,.30), inset 0 0 22px rgba(255,180,84,.18); }
+  50%      { transform: scale(1.09); box-shadow: 0 0 62px rgba(255,180,84,.62), inset 0 0 40px rgba(255,180,84,.34); }
+}
+@keyframes hud-shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-6px); }
+  75%      { transform: translateX(6px); }
+}
+
+/* ---------- controls ---------- */
+
+.hud-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+
+.hud-btn {
+  padding: 9px 16px;
+  background: rgba(79, 214, 247, 0.07);
+  border: 1px solid rgba(79, 214, 247, 0.3);
+  color: rgba(79, 214, 247, 0.9);
+  border-radius: 999px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.hud-btn:active { background: rgba(79, 214, 247, 0.18); }
+.hud-btn.danger { border-color: rgba(255, 95, 86, 0.4); color: rgba(255, 95, 86, 0.9); }
+
+.hud-alert {
+  position: absolute;
+  top: calc(var(--safe-t) + 14px);
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(90vw, 420px);
+  padding: 10px 16px;
+  background: rgba(60, 16, 14, 0.92);
+  border: 1px solid rgba(255, 95, 86, 0.5);
+  border-radius: 12px;
+  color: #ffd9d6;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* Motion is the entire status language here, so reduced-motion needs a real
+   alternative rather than simply switching everything off. */
+@media (prefers-reduced-motion: reduce) {
+  .spin-slow, .spin-reverse { animation: none; }
+  .hud[data-state='listening'] .hud-core,
+  .hud[data-state='speaking'] .hud-core { animation: none; }
+  .hud[data-state='thinking'] .hud-core {
+    animation: hud-fade 1.4s ease-in-out infinite;
+  }
+  @keyframes hud-fade { 0%,100% { opacity: .62; } 50% { opacity: 1; } }
+}

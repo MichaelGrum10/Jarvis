@@ -9,6 +9,7 @@
  */
 
 import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js';
+import { WakeListener, captureUtterance, JarvisVoice } from '/static/hud.js';
 
 const API = '';
 const store = {
@@ -28,6 +29,7 @@ let commandTimer = null;
 let mode = defaultMode();
 let listener = null;
 const speaker = new Speaker();
+const jarvis = new JarvisVoice();
 
 const $ = (id) => document.getElementById(id);
 const el = (tag, cls, text) => {
@@ -101,7 +103,7 @@ async function enterApp() {
   $('app').classList.remove('hidden');
   $('status-dot').classList.add('on');
   if (!voiceSupport.any && mode === 'voice') mode = 'text';
-  applyMode();
+  refreshIdentity().then(applyMode);
   $('voice-hint').textContent = tapHint();
   loadConversations();
   requestLocation(true);
@@ -529,13 +531,27 @@ async function loadRuns() {
 
 function applyMode() {
   const voice = mode === 'voice';
-  $('voice-panel').classList.toggle('hidden', !voice);
+  // In voice mode the HUD takes the whole screen: no transcript, no composer,
+  // no message list. You already know what you said, and reading a reply you are
+  // simultaneously being told is just noise.
+  $('hud').classList.toggle('hidden', !voice);
+  $('messages').classList.toggle('hidden', voice);
   $('composer').classList.toggle('hidden', voice);
+  $('voice-panel').classList.add('hidden');   // superseded by the HUD
   $('mode-btn').textContent = voice ? '⌨' : '🎙';
   $('mode-btn').title = voice ? 'Switch to typing' : 'Switch to voice';
-  // Dictation is available in text mode too — it just doesn't take over the screen.
+  // Dictation stays available in text mode — it just doesn't take over the screen.
   $('mic-btn').classList.toggle('hidden', !voiceSupport.any);
-  if (!voice) { stopListening(); speaker.cancel(); }
+
+  if (voice) {
+    startWakeWord();
+    setHudState('idle', identityState.enrolled ? 'Say "Jarvis", or tap' : 'Tap to speak');
+  } else {
+    stopWakeWord();
+    stopListening();
+    jarvis.cancel();
+    speaker.cancel();
+  }
 }
 
 function setMode(next) {
@@ -544,11 +560,39 @@ function setMode(next) {
   applyMode();
 }
 
+/* ---------------- HUD state ----------------
+ * idle | listening | thinking | speaking | denied
+ * The ring's colour and motion carry the state; there is deliberately no text
+ * transcript in voice mode. */
+
+function setHudState(state, status) {
+  $('hud').dataset.state = state;
+  if (status !== undefined) $('hud-status').textContent = status;
+}
+
+function hudAlert(message) {
+  const box = $('hud-alert');
+  box.textContent = message;
+  box.classList.remove('hidden');
+  clearTimeout(hudAlert._timer);
+  hudAlert._timer = setTimeout(() => box.classList.add('hidden'), 6000);
+}
+
 function speakReply(text) {
+  if (mode === 'voice') {
+    jarvis.speak(text, {
+      onStart: () => setHudState('speaking', 'Speaking'),
+      onEnd: () => {
+        setHudState('idle', identityState.enrolled ? 'Say "Jarvis", or tap' : 'Tap to speak');
+        // Hand the mic straight back so a conversation can continue without
+        // reaching for the phone between turns.
+        if (mode === 'voice') startWakeWord();
+      },
+    });
+    return;
+  }
   $('voice-stop').classList.remove('hidden');
-  speaker.speak(text, {
-    onEnd: () => $('voice-stop').classList.add('hidden'),
-  });
+  speaker.speak(text, { onEnd: () => $('voice-stop').classList.add('hidden') });
 }
 
 function makeListener({ intoComposer }) {
@@ -609,6 +653,216 @@ function toggleListening(options) {
   else startListening(options);
 }
 
+/* ---------------- HUD voice turn ---------------- */
+
+/** Draw the radial tick marks. Generated rather than hand-written so the count
+ *  can change without editing 60 nearly-identical SVG lines. */
+function buildTicks() {
+  const group = $('hud-ticks');
+  if (!group || group.childElementCount) return;
+  const ns = 'http://www.w3.org/2000/svg';
+  const count = 60;
+  for (let i = 0; i < count; i += 1) {
+    const angle = (i / count) * Math.PI * 2;
+    const major = i % 5 === 0;
+    const inner = major ? 66 : 70;
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', (100 + Math.cos(angle) * inner).toFixed(2));
+    line.setAttribute('y1', (100 + Math.sin(angle) * inner).toFixed(2));
+    line.setAttribute('x2', (100 + Math.cos(angle) * 76).toFixed(2));
+    line.setAttribute('y2', (100 + Math.sin(angle) * 76).toFixed(2));
+    line.setAttribute('opacity', major ? '0.85' : '0.35');
+    group.appendChild(line);
+  }
+}
+
+let wake = null;
+let hudBusy = false;
+const identityState = { enrolled: false, enforcing: false, ready: false };
+
+async function refreshIdentity() {
+  try {
+    const status = await api('/api/identity/status');
+    Object.assign(identityState, {
+      enrolled: status.enrolled,
+      enforcing: status.enforcing,
+      ready: status.ready,
+    });
+    $('hud-enroll').textContent = status.enrolled
+      ? `Re-enrol (${status.samples})`
+      : 'Enrol voice';
+    if (status.unacknowledged_alerts > 0) {
+      hudAlert(
+        `${status.unacknowledged_alerts} unrecognised voice attempt(s). ` +
+        'Nothing was actioned.'
+      );
+      api('/api/identity/alerts/acknowledge', { method: 'POST' }).catch(() => {});
+    }
+  } catch { /* identity is optional; the HUD works without it */ }
+}
+
+function startWakeWord() {
+  if (mode !== 'voice' || hudBusy) return;
+  buildTicks();
+  if (!wake) {
+    wake = new WakeListener(
+      'jarvis',
+      () => { runVoiceTurn(); },
+      // Only surface a mic problem once they've actually tried to talk. Firing
+      // it the instant voice mode opens blames the user for a permission they
+      // were never asked for yet.
+      (message) => { if (hudBusy) hudAlert(message); },
+    );
+  }
+  if (!wake.available) {
+    setHudState('idle', 'Tap to speak');
+    return;
+  }
+  wake.start();
+}
+
+function stopWakeWord() {
+  wake?.stop();
+}
+
+async function runVoiceTurn() {
+  if (hudBusy) return;
+  hudBusy = true;
+  stopWakeWord();
+  jarvis.cancel();
+
+  try {
+    setHudState('listening', 'Listening');
+    const { wav, spoke } = await captureUtterance();
+
+    if (!spoke || !wav) {
+      setHudState('idle', 'Didn\'t catch that');
+      return;
+    }
+
+    setHudState('thinking', 'Working');
+    const form = new FormData();
+    form.append('audio', wav, 'speech.wav');
+    const language = (navigator.language || '').slice(0, 2);
+    if (language) form.append('language', language);
+
+    const res = await fetch('/api/voice/transcribe', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${store.token}` },
+      body: form,
+    });
+
+    if (res.status === 403) {
+      // Voice didn't match the enrolled owner. The server has already refused
+      // the request and raised the alert; the HUD just has to show it.
+      const body = await res.json().catch(() => ({}));
+      setHudState('denied', 'Voice not recognised');
+      hudAlert(body.detail || 'That voice does not match. Nothing was actioned.');
+      setTimeout(() => setHudState('idle', 'Say "Jarvis", or tap'), 3200);
+      return;
+    }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.detail || `Transcription failed (${res.status})`);
+    }
+
+    const data = await res.json();
+    if (data.ignored || !data.text) {
+      setHudState('idle', data.reason || 'Nothing to do');
+      return;
+    }
+
+    setHudState('thinking', 'Working');
+    await send(data.text);   // send() drives speakReply() on completion
+  } catch (err) {
+    setHudState('idle', 'Something went wrong');
+    hudAlert(err.message);
+  } finally {
+    hudBusy = false;
+    if (mode === 'voice' && !jarvis.speaking) startWakeWord();
+  }
+}
+
+/* ---------------- voice enrolment ---------------- */
+
+const ENROL_PHRASES = [
+  'The quick brown fox jumps over the lazy dog.',
+  'Jarvis, what is on my calendar today?',
+  'I would like to book a haircut this afternoon.',
+];
+
+async function enrolVoice() {
+  stopWakeWord();
+  hudBusy = true;
+
+  showModal('Enrol your voice', `
+    <p class="muted">Read each line aloud, normally, at your usual distance from
+    the phone. Three separate recordings average out posture and background so
+    the match is stable.</p>
+    <p class="muted"><strong>This is a filter, not a lock.</strong> It stops other
+    people in the room being answered and tells you when someone tried. A
+    recording of your voice will pass it — your password is what actually
+    protects this server.</p>
+    <div id="enrol-body"></div>
+  `);
+
+  const body = () => $('enrol-body');
+
+  try {
+    for (let i = 0; i < ENROL_PHRASES.length; i += 1) {
+      body().innerHTML = `
+        <div class="card">
+          <h4>Sample ${i + 1} of ${ENROL_PHRASES.length}</h4>
+          <p style="font-size:17px">“${esc(ENROL_PHRASES[i])}”</p>
+          <button id="enrol-go">Record</button>
+        </div>`;
+
+      await new Promise((resolve) => { $('enrol-go').onclick = resolve; });
+
+      body().innerHTML = '<div class="card"><h4>Recording…</h4><p class="muted">Speak now.</p></div>';
+      const { wav, spoke } = await captureUtterance();
+      if (!spoke || !wav) {
+        body().innerHTML = '<p class="error">Didn\'t hear anything. Close and try again.</p>';
+        return;
+      }
+
+      const form = new FormData();
+      form.append('audio', wav, 'enrol.wav');
+      if (i === 0) form.append('reset', 'true');   // fresh profile on first sample
+
+      const res = await fetch('/api/identity/enroll', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${store.token}` },
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        body().innerHTML = `<p class="error">${esc(data.detail || 'Enrolment failed.')}</p>`;
+        return;
+      }
+
+      if (data.ready) {
+        body().innerHTML = `
+          <div class="card">
+            <h4>Done</h4>
+            <p>Voice enrolled from ${data.samples} samples (consistency
+            ${Math.round(data.cohesion * 100)}%).</p>
+            ${data.warning ? `<p class="error">${esc(data.warning)}</p>` : ''}
+            <p class="muted">To act on this, set <code>REQUIRE_VOICE_MATCH=true</code>
+            in <code>.env</code> and restart. Until then it records matches without
+            refusing anything.</p>
+          </div>`;
+      }
+    }
+    await refreshIdentity();
+  } catch (err) {
+    body().innerHTML = `<p class="error">${esc(err.message)}</p>`;
+  } finally {
+    hudBusy = false;
+    if (mode === 'voice') startWakeWord();
+  }
+}
+
 /* ---------------- drawer ---------------- */
 
 const openDrawer = () => { $('drawer').classList.add('open'); $('scrim').classList.add('on'); };
@@ -621,6 +875,10 @@ $('password').onkeydown = (e) => { if (e.key === 'Enter') signIn(); };
 $('label').onkeydown = (e) => { if (e.key === 'Enter') signIn(); };
 
 $('mode-btn').onclick = () => setMode(mode === 'voice' ? 'text' : 'voice');
+$('hud-stage').onclick = () => { if (jarvis.speaking) { jarvis.cancel(); } runVoiceTurn(); };
+$('hud-stage').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); runVoiceTurn(); } };
+$('hud-enroll').onclick = enrolVoice;
+$('hud-exit').onclick = () => setMode('text');
 $('voice-orb').onclick = () => toggleListening();
 $('voice-to-text').onclick = () => setMode('text');
 $('voice-stop').onclick = () => { speaker.cancel(); $('voice-stop').classList.add('hidden'); };

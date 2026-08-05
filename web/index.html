@@ -11,6 +11,7 @@
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/hud.css">
 </head>
 <body>
 
@@ -68,6 +69,42 @@
       </div>
     </div>
   </main>
+
+  <div id="hud" class="hud hidden" data-state="idle">
+    <div id="hud-alert" class="hud-alert hidden"></div>
+
+    <div id="hud-stage" class="hud-stage" role="button" tabindex="0"
+         aria-label="Tap to speak to Jarvis">
+      <svg class="hud-ring spin-slow" viewBox="0 0 200 200" aria-hidden="true">
+        <circle class="ring-track" cx="100" cy="100" r="94"/>
+        <circle class="ring-outer" cx="100" cy="100" r="88" stroke-dasharray="2 10"/>
+        <path class="ring-sweep" d="M100 12 A88 88 0 0 1 172 52"/>
+        <path class="ring-accent" d="M28 148 A88 88 0 0 0 62 180"/>
+      </svg>
+
+      <svg class="hud-ring spin-reverse" viewBox="0 0 200 200" aria-hidden="true">
+        <circle class="ring-track" cx="100" cy="100" r="76"/>
+        <g class="ring-ticks" id="hud-ticks"></g>
+        <path class="ring-sweep" d="M100 24 A76 76 0 0 1 152 46" opacity="0.75"/>
+      </svg>
+
+      <svg class="hud-ring spin-slow" viewBox="0 0 200 200" aria-hidden="true"
+           style="--spin: 68s">
+        <circle class="ring-outer" cx="100" cy="100" r="66" stroke-dasharray="1 6"/>
+      </svg>
+
+      <div class="hud-core">
+        <span class="hud-label">J.A.R.V.I.S.</span>
+      </div>
+    </div>
+
+    <div id="hud-status" class="hud-status">Tap to speak</div>
+
+    <div class="hud-actions">
+      <button id="hud-enroll" class="hud-btn">Enrol voice</button>
+      <button id="hud-exit" class="hud-btn">Text mode</button>
+    </div>
+  </div>
 
   <div id="voice-panel" class="voice-panel hidden">
     <div id="voice-transcript" class="voice-transcript"></div>

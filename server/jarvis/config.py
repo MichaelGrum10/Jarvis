@@ -69,6 +69,21 @@ class Settings(BaseSettings):
     nominatim_url: str = "https://nominatim.openstreetmap.org"
     overpass_url: str = "https://overpass-api.de/api/interpreter"
 
+    # --- voice identity ---
+    # A filter, not a security boundary: it stops other people in the room being
+    # answered, and tells you when someone tried. A recording of you will pass it.
+    #
+    # 0.78 sits near the measured equal-error rate for this embedding: on
+    # synthetic speakers it rejects ~5% of genuine attempts and admits ~7% of
+    # impostors. The distributions genuinely overlap, so no threshold is clean —
+    # raise it toward 0.85 to favour keeping others out at the cost of being
+    # asked to repeat yourself, lower it toward 0.72 for the reverse.
+    require_voice_match: bool = False
+    voice_match_threshold: float = 0.78
+    voice_alert_email: bool = True
+    wake_word: str = "jarvis"
+    require_wake_word: bool = False
+
     # --- autonomy ---
     autonomy_enabled: bool = False
     autonomy_repo_path: Path = REPO_ROOT
