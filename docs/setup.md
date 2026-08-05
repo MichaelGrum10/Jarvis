@@ -3,6 +3,10 @@
 Roughly 30 minutes end to end. Steps 1–4 get you a working assistant; 5 and 6 are
 optional extras.
 
+> **On a phone?** [setup-from-iphone.md](setup-from-iphone.md) covers the same
+> ground from an iPhone, including SSH keys and the one-paste installer.
+> **In a hurry?** `scripts/bootstrap.sh` collapses steps 1–3 into one command.
+
 ## 1. Oracle Cloud instance
 
 The Always Free tier covers this comfortably. Create a VM:

@@ -75,6 +75,20 @@ works identically. Walkthrough in [docs/domain.md](docs/domain.md).
 On your Oracle Cloud instance (Ubuntu 22.04+, the free ARM shape is plenty):
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/MichaelGrum10/Jarvis/claude/jarvis-ai-assistant-9tlgu3/scripts/bootstrap.sh -o bootstrap.sh
+less bootstrap.sh   # read before running
+bash bootstrap.sh
+```
+
+That installs Docker and git, opens the firewall, clones the repo and walks you
+through credentials. Re-running it is safe — every step checks before acting.
+
+**Setting up from a phone?** [docs/setup-from-iphone.md](docs/setup-from-iphone.md)
+covers the whole install from an iPhone, including getting SSH working.
+
+Prefer to do it by hand:
+
+```bash
 sudo apt update && sudo apt install -y docker.io docker-compose-v2 git
 sudo usermod -aG docker $USER && newgrp docker
 
