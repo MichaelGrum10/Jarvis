@@ -14,7 +14,7 @@ anywhere in the stack.
 
 | Capability | How | Cost |
 |---|---|---|
-| Conversation + reasoning | Groq (`llama-3.3-70b-versatile`), full tool calling | free tier |
+| Conversation + reasoning | Groq + optional Cerebras/OpenRouter/Together, with failover | free tier |
 | **Email** — triage, expand, search, send | iCloud IMAP/SMTP, app-specific password | free |
 | **Calendar** — read, book, delete, find free slots | iCloud CalDAV | free |
 | **Messages** — read iMessage/SMS, send | Mac bridge reading `chat.db` | free, needs a Mac |
@@ -219,6 +219,23 @@ in [docs/voice-identity.md](docs/voice-identity.md); the basics are in
 [docs/voice.md](docs/voice.md).
 
 ---
+
+## Running out of capacity
+
+Free tiers meter tokens per minute, and one turn here carries ~29 tool schemas —
+so a busy minute can stop everything. The client keeps a pool of endpoints
+(provider × key × model) and fails over rather than retrying a busy one.
+
+The default key already gives three endpoints. Adding a second *provider* is the
+best way to get more; they're free, OpenAI-compatible, and drop straight in:
+
+```bash
+CEREBRAS_API_KEY=csk_...      # cloud.cerebras.ai
+OPENROUTER_API_KEY=sk-or-...  # openrouter.ai/keys
+```
+
+Full detail, including how to pick a better model and why stacking accounts at
+one provider is a bad idea, in [docs/model-capacity.md](docs/model-capacity.md).
 
 ## Self-improvement
 

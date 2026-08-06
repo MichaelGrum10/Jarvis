@@ -33,9 +33,35 @@ class Settings(BaseSettings):
 
     # --- llm (groq free tier) ---
     groq_api_key: str = ""
+    # Additional keys, comma separated. Each is a separate quota bucket, tried in
+    # order when one is busy. See docs/model-capacity.md before adding several
+    # keys from one provider — that is often against their terms, and using a
+    # second provider instead gives more capacity anyway.
+    groq_api_keys: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_model: str = "llama-3.3-70b-versatile"
-    groq_fast_model: str = "llama-3.1-8b-instant"
+
+    # Tried in order. Every model here must be good at tool calling: this
+    # assistant sends ~29 tool schemas on every turn, and a model that fumbles
+    # them produces malformed calls the provider rejects outright. Small "fast"
+    # models are deliberately absent — they have the tightest token-per-minute
+    # caps, so they fail on exactly the large requests a fallback exists to catch.
+    groq_model_ladder: str = (
+        "llama-3.3-70b-versatile,openai/gpt-oss-120b,moonshotai/kimi-k2-instruct"
+    )
+
+    # --- other OpenAI-compatible providers (all optional, all free tiers) ---
+    cerebras_api_key: str = ""
+    cerebras_base_url: str = "https://api.cerebras.ai/v1"
+    cerebras_model: str = "llama-3.3-70b"
+
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+
+    together_api_key: str = ""
+    together_base_url: str = "https://api.together.xyz/v1"
+    together_model: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.3
     # Whisper on Groq: free with the same key, and better than the browser engines.

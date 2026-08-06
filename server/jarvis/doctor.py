@@ -113,6 +113,61 @@ async def check_groq(report: Report) -> None:
         report.ok("Chat model", f"{settings.groq_model} replied {reply!r}")
         report.ok("Key", mask(settings.groq_api_key))
 
+    await _check_pool(report)
+
+
+async def _check_pool(report: Report) -> None:
+    """Show the endpoint pool and what the configured keys can actually reach.
+
+    Model names and rate limits change without notice, so this reads them from
+    the provider rather than asserting anything from memory.
+    """
+    from .llm.client import get_llm
+
+    client = get_llm()
+    total = len(client.pool)
+    if total <= 1:
+        report.warn(
+            "Capacity", "a single endpoint — one busy minute stops everything",
+            "Add a second provider (free tiers at cerebras.ai or openrouter.ai)\n"
+            "See docs/model-capacity.md",
+        )
+    else:
+        report.ok("Capacity", f"{total} endpoints with failover")
+    for entry in client.pool.status():
+        state = "ready" if entry["available"] else f"cooling {entry['cooling_for']}s"
+        report.ok(f"  {entry['label']}", f"key {entry['key']}, {state}")
+
+    try:
+        models = await client.list_available_models()
+    except Exception as exc:
+        report.warn("Model list", f"could not fetch: {type(exc).__name__}")
+        return
+
+    if not models:
+        report.warn("Model list", "provider returned none")
+        return
+
+    configured = {e.model for e in client.pool.endpoints}
+    missing = sorted(m for m in configured if m not in {x["id"] for x in models})
+    if missing:
+        report.bad(
+            "Configured models", f"not available to your key: {', '.join(missing)}",
+            "Edit GROQ_MODEL_LADDER in .env to models from the list below.",
+        )
+
+    tool_capable = [
+        m["id"] for m in models
+        if not any(skip in m["id"].lower() for skip in ("whisper", "tts", "guard", "embed"))
+    ]
+    report.ok("Models available", f"{len(tool_capable)} usable for chat")
+    for model_id in tool_capable[:14]:
+        marker = " *" if model_id in configured else ""
+        print(f"      {DIM}{model_id}{marker}{RESET}")
+    if len(tool_capable) > 14:
+        print(f"      {DIM}… and {len(tool_capable) - 14} more{RESET}")
+    print(f"      {DIM}* currently in your ladder{RESET}")
+
 
 async def check_mail(report: Report) -> None:
     header("iCloud Mail (IMAP)")
