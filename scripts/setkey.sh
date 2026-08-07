@@ -29,6 +29,30 @@ case "$VALUE" in
   *"'"*) fail "Value can't contain a single quote — it would break .env quoting." ;;
 esac
 
+# Catch a mistyped or truncated key here rather than at the next benchmark run,
+# where it surfaces as an opaque "Please pass a valid API key" from the provider.
+# These are warnings, not errors: key formats change, and being wrong about one
+# shouldn't stop someone configuring their own server.
+warn_shape() { printf "${YELLOW}! %s${RESET}\n" "$1"; }
+
+case "$NAME" in
+  GEMINI_API_KEY)
+    case "$VALUE" in
+      AIza*) [ ${#VALUE} -ge 35 ] || warn_shape "Google keys are ~39 characters — this looks truncated." ;;
+      *)     warn_shape "Google AI Studio keys start with 'AIza'. Check you copied the whole key from aistudio.google.com/apikey" ;;
+    esac
+    ;;
+  GROQ_API_KEY)
+    case "$VALUE" in gsk_*) ;; *) warn_shape "Groq keys start with 'gsk_'." ;; esac
+    ;;
+  OPENROUTER_API_KEY)
+    case "$VALUE" in sk-or-*) ;; *) warn_shape "OpenRouter keys start with 'sk-or-'." ;; esac
+    ;;
+  CEREBRAS_API_KEY)
+    case "$VALUE" in csk-*|csk_*) ;; *) warn_shape "Cerebras keys start with 'csk-'." ;; esac
+    ;;
+esac
+
 # Values are single-quoted on write. Unquoted, anything containing '#' is
 # truncated at that character and trailing spaces are dropped, silently.
 if grep -q "^${NAME}=" .env; then
