@@ -133,6 +133,18 @@ async def places_search(
             return ToolResult.fail(f"Could not find a place called '{near}'.")
         lat, lon, origin = geo["lat"], geo["lon"], geo["name"]
 
+    if lat is None or lon is None:
+        # Without this the None values go straight into the Overpass query as
+        # `around:3000,None,None`, which comes back as a 400 and gets reported
+        # as "OpenStreetMap lookup failed" — a network problem, apparently, when
+        # the actual cause is a permission the user can grant in one tap.
+        return ToolResult.fail(
+            "No location available. This device hasn't shared its location, so there's "
+            "nothing to search near. Tell the user to tap the ◎ button at the top of the "
+            "app and allow location — or ask them which town or area to search in, and "
+            "call this again with `near` set to that."
+        )
+
     radius_m = int(max(0.2, min(radius_km, 25.0)) * 1000)
     key = category.lower().strip().replace(" ", "_")
     tags = CATEGORIES.get(key)

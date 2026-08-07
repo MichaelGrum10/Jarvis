@@ -60,6 +60,7 @@ class Endpoint:
     consecutive_failures: int = 0
     successes: int = 0
     failures: int = 0
+    retired: str = ""  # why this endpoint is out for good, "" while in use
 
     def __post_init__(self) -> None:
         if not self.label:
@@ -68,7 +69,20 @@ class Endpoint:
 
     @property
     def available(self) -> bool:
-        return time.monotonic() >= self.cooldown_until
+        return not self.retired and time.monotonic() >= self.cooldown_until
+
+    def retire(self, reason: str) -> None:
+        """Take this endpoint out permanently, for a fault time cannot fix.
+
+        A cooldown assumes recovery. Some faults never recover: a model that
+        cannot format a tool call will fail identically on every future request,
+        and cooling it just means retrying a guaranteed failure at slower and
+        slower intervals — while it still counts as pool capacity that isn't
+        there. Retiring it makes the pool's size honest and stops the waste.
+        """
+        if not self.retired:
+            self.retired = reason
+            log.warning("Retiring %s: %s", self.label, reason)
 
     @property
     def seconds_until_available(self) -> float:
@@ -116,9 +130,16 @@ class Pool:
         return [e for e in self.endpoints if e.available]
 
     def soonest(self) -> Endpoint | None:
-        if not self.endpoints:
+        """The endpoint that will come back first. Retired ones never do.
+
+        Excluding them matters: a retired endpoint's cooldown is zero, so it
+        would win this comparison and produce "capacity returns shortly" for a
+        pool where nothing is coming back at all.
+        """
+        live = [e for e in self.endpoints if not e.retired]
+        if not live:
             return None
-        return min(self.endpoints, key=lambda e: e.cooldown_until)
+        return min(live, key=lambda e: e.cooldown_until)
 
     def wait_hint(self) -> float:
         endpoint = self.soonest()
@@ -132,6 +153,7 @@ class Pool:
                 "key": e.masked_key(),
                 "available": e.available,
                 "cooling_for": round(e.seconds_until_available, 1),
+                "retired": e.retired,
                 "successes": e.successes,
                 "failures": e.failures,
             }

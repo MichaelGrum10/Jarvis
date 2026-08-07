@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     # second provider instead gives more capacity anyway.
     groq_api_keys: str = ""
     groq_base_url: str = "https://api.groq.com/openai/v1"
-    groq_model: str = "llama-3.3-70b-versatile"
+    groq_model: str = "openai/gpt-oss-120b"
 
     # Tried in order. Every model here must be good at tool calling: this
     # assistant sends ~29 tool schemas on every turn, and a model that fumbles
@@ -64,12 +64,23 @@ class Settings(BaseSettings):
     # entries it cannot reach.
     # gpt-oss-120b leads on measured evidence, not reputation. On a real free-tier
     # account llama-3.3-70b-versatile returns 400 "Failed to call a function" on
-    # even a single-tool request, while gpt-oss-120b handles a full 29-schema turn
-    # cleanly at the same latency. Since this assistant is tool calls end to end,
-    # a model that cannot make them is not a fallback — it is two wasted
-    # round-trips on every single turn before failover reaches something that
-    # works. Verify on your own account with: python -m jarvis.benchmark
-    groq_model_ladder: str = "openai/gpt-oss-120b,llama-3.3-70b-versatile"
+    # even a single-tool request, while gpt-oss-120b handles a full 30-schema turn
+    # cleanly at the same latency.
+    #
+    # One entry, deliberately. llama-3.3-70b-versatile was the obvious second
+    # choice and is gone because it was measured failing every tool call: a
+    # fallback that cannot make tool calls is worse than no fallback at all. It
+    # burns two round-trips per turn, then its own escalating cooldown takes the
+    # slot out of rotation, so a busy minute on the primary finds nothing behind
+    # it. Nothing else has been substituted, because putting an unverified model
+    # here would repeat the same mistake with a different name.
+    #
+    # Real capacity comes from a second *provider*, not a second model on the
+    # same key — a rate limit is per account, so the fallback shares the bucket
+    # it is meant to relieve. Cerebras and OpenRouter both have free tiers:
+    # see docs/model-capacity.md. To add a model here, measure it first with
+    # `python -m jarvis.benchmark`, which reports tool-call correctness.
+    groq_model_ladder: str = "openai/gpt-oss-120b"
 
     # --- other OpenAI-compatible providers (all optional, all free tiers) ---
     cerebras_api_key: str = ""

@@ -343,11 +343,15 @@ def test_unconfigured_primary_is_ignored_not_fatal():
     assert pool.endpoints[0].label.startswith("groq:")
 
 
-async def test_a_model_that_cannot_tool_call_falls_out_of_rotation():
+async def test_a_model_that_cannot_tool_call_is_retired_not_merely_rested():
     """Measured on a real account: llama-3.3-70b-versatile returns 400 "Failed to
-    call a function" on even a single-tool prompt. A fixed cooldown would have it
-    retried every few seconds forever — two wasted round-trips per turn. It has to
-    back off further each time so it deprioritises itself."""
+    call a function" on even a single-tool prompt.
+
+    Backing off was the first attempt at this and wasn't enough. A cooldown
+    assumes recovery, and this fault never recovers — so the endpoint kept being
+    retried at slower and slower intervals while still counting as pool capacity
+    that didn't exist. Twice in a row, with a correction in between, is proof
+    enough: take it out for good."""
     client = GroqClient(settings(groq_model_ladder="broken,working"))
     try:
         with respx.mock:
@@ -368,12 +372,12 @@ async def test_a_model_that_cannot_tool_call_falls_out_of_rotation():
             assert response.content == "answered by the working model"
 
         broken = next(e for e in client.pool.endpoints if e.model == "broken")
-        first_cooldown = broken.seconds_until_available
-        assert first_cooldown > 1, "a repeatedly-failing endpoint must be rested"
+        assert broken.retired, "a model that cannot tool-call must not be retried"
+        assert broken not in client.pool.ready()
 
-        # A second failure must back off further, not reset to the same pause.
-        broken.rest()
-        assert broken.seconds_until_available > first_cooldown
+        # And the pool must stop claiming it as capacity that will return.
+        working = next(e for e in client.pool.endpoints if e.model == "working")
+        assert client.pool.soonest() is working
     finally:
         await client.aclose()
 
@@ -544,3 +548,73 @@ async def test_one_providers_catalogue_never_answers_for_another():
 
     assert set(by_provider[GROQ]) == {"model-a"}
     assert GEMINI not in by_provider, "an unreadable catalogue must be absent, not empty"
+
+
+def _pool_of(n=3):
+    return Pool([
+        Endpoint(model=f"model-{i}", api_key="gsk_x", base_url=GROQ, label=f"groq:model-{i}")
+        for i in range(n)
+    ])
+
+
+def test_a_retired_endpoint_is_not_offered_again():
+    pool = _pool_of(2)
+    pool.endpoints[0].retire("cannot produce valid tool calls")
+
+    assert pool.endpoints[0] not in pool.ready()
+    assert len(pool.ready()) == 1
+
+
+def test_retiring_twice_keeps_the_first_reason():
+    endpoint = _pool_of(1).endpoints[0]
+    endpoint.retire("cannot produce valid tool calls")
+    endpoint.retire("something else")
+
+    assert endpoint.retired == "cannot produce valid tool calls"
+
+
+def test_a_retired_endpoint_is_not_reported_as_coming_back_soon():
+    """Its cooldown is zero, so it would win `soonest` and produce 'capacity
+    returns shortly' for a pool where nothing is coming back."""
+    pool = _pool_of(2)
+    pool.endpoints[0].retire("cannot produce valid tool calls")
+    pool.endpoints[1].rest(45.0)
+
+    assert pool.wait_hint() > 30
+
+
+def test_wait_hint_is_zero_when_everything_is_retired():
+    pool = _pool_of(2)
+    for endpoint in pool.endpoints:
+        endpoint.retire("cannot produce valid tool calls")
+
+    assert pool.soonest() is None
+    assert pool.wait_hint() == 0.0
+
+
+def test_endpoints_are_not_counted_as_both_tried_and_cooling():
+    """The reported bug: 'tried 1 of 3 endpoints, 3 still cooling down' — an
+    endpoint tried and failed is cooling by the time the message is built, so
+    counting the two separately described four endpoints in a pool of three."""
+    client = GroqClient(settings())
+    client.pool = _pool_of(3)
+    for endpoint in client.pool.endpoints:
+        endpoint.rest(30.0)
+
+    message = client._exhausted_message(["groq:model-0: rate limited"])
+
+    assert "tried 1 of 3 endpoints" in message
+    assert "3 still cooling" not in message
+    assert "2 still cooling" in message
+
+
+def test_a_retired_endpoint_is_named_and_not_counted_as_capacity():
+    client = GroqClient(settings())
+    client.pool = _pool_of(2)
+    client.pool.endpoints[0].retire("cannot produce valid tool calls")
+
+    message = client._exhausted_message(["groq:model-1: rate limited"])
+
+    assert "1 retired as unusable" in message
+    assert "groq:model-0" in message
+    assert "single endpoint" in message, "one live endpoint left is a capacity warning"

@@ -160,6 +160,12 @@ async def _check_pool(report: Report) -> None:
     else:
         report.ok("Capacity", f"{total} endpoints with failover")
     for entry in client.pool.status():
+        if entry.get("retired"):
+            report.bad(
+                f"  {entry['label']}", f"retired — {entry['retired']}",
+                "Remove it from GROQ_MODEL_LADDER in .env; it will never recover.",
+            )
+            continue
         state = "ready" if entry["available"] else f"cooling {entry['cooling_for']}s"
         report.ok(f"  {entry['label']}", f"key {entry['key']}, {state}")
 

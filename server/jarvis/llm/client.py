@@ -189,14 +189,16 @@ class GroqClient:
                         )
                         endpoint.succeeded()
                         return response
+                    except _BadToolCall:
+                        # Twice in a row, with a correction in between, is not
+                        # bad luck — the model cannot format a tool call, and
+                        # never will. Backing off only slows the retries down;
+                        # the endpoint still counts as capacity, and its
+                        # escalating cooldown eventually takes the slot out of
+                        # rotation anyway. Retiring it says so honestly and
+                        # leaves the pool reporting what it can really do.
+                        endpoint.retire("cannot produce valid tool calls")
                     except Exception:
-                        # Escalating backoff rather than a fixed pause: an
-                        # endpoint that fails this way twice in a row is very
-                        # likely incapable, not unlucky, and a fixed rest would
-                        # have it retried every few seconds indefinitely — two
-                        # wasted round-trips on every turn. Backing off further
-                        # each time lets a broken model fall out of rotation on
-                        # its own, without needing to be identified by name.
                         endpoint.rest()
 
             except _Upstream as exc:
@@ -216,15 +218,23 @@ class GroqClient:
     def _exhausted_message(self, errors: list[str]) -> str:
         """Explain what actually happened, and whether waiting will help.
 
-        Two distinctions matter here and both were previously lost. An endpoint
+        Three distinctions matter here and each was previously lost. An endpoint
         still cooling down from an earlier failure is skipped before it is ever
         tried, so counting it among the failures overstates what was attempted.
-        And a rejected key is not a busy one: telling someone to wait twenty
-        seconds for a credential that will never become valid sends them in
-        precisely the wrong direction.
+        A rejected key is not a busy one: telling someone to wait twenty seconds
+        for a credential that will never become valid sends them in precisely the
+        wrong direction. And a retired endpoint is gone for good, so counting it
+        as capacity that will return is simply false.
         """
+        total = len(self.pool)
         tried = len(errors)
-        resting = [e for e in self.pool.endpoints if not e.available]
+        retired = [e for e in self.pool.endpoints if e.retired]
+        # Endpoints never reached, because they were already cooling when this
+        # request began. Derived by subtraction rather than by inspecting state
+        # afterwards: an endpoint tried and failed a moment ago is now cooling
+        # too, and counting it in both places is how "tried 1 of 3, 3 still
+        # cooling" came to describe a pool of three.
+        skipped = total - tried - len(retired)
 
         # A key or model problem is a configuration fault; waiting cannot fix it.
         broken = [e for e in errors if "rate limited" not in e]
@@ -232,11 +242,11 @@ class GroqClient:
 
         parts: list[str] = []
         if tried:
-            parts.append(f"tried {tried} of {len(self.pool)} endpoints")
-        if resting and len(resting) != tried:
-            skipped = len(resting) - sum(1 for e in errors if "rate limited" in e)
-            if skipped > 0:
-                parts.append(f"{skipped} still cooling down from earlier failures")
+            parts.append(f"tried {tried} of {total} endpoints")
+        if skipped > 0:
+            parts.append(f"{skipped} still cooling down from earlier failures")
+        if retired:
+            parts.append(f"{len(retired)} retired as unusable")
 
         lines = [f"No endpoint could answer ({', '.join(parts) or 'none available'})."]
 
@@ -245,12 +255,18 @@ class GroqClient:
                 "These look misconfigured rather than busy, and won't recover on their "
                 f"own: {'; '.join(broken[:3])}."
             )
+        if retired:
+            lines.append(
+                "Permanently out of rotation: "
+                + "; ".join(f"{e.label} ({e.retired})" for e in retired[:3])
+                + ". Remove them from your model ladder in .env."
+            )
         if rate_limited:
             wait = self.pool.wait_hint()
             when = f" about {int(wait)}s" if wait > 1 else " shortly"
             lines.append(f"Rate limited:{when} until capacity returns.")
 
-        if len(self.pool) == 1:
+        if total - len(retired) <= 1:
             lines.append(
                 "You're on a single endpoint, so one busy minute stops everything. "
                 "A second provider gives independent capacity — see docs/model-capacity.md."

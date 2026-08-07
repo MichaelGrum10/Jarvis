@@ -95,3 +95,17 @@ async def test_duplicate_registration_rejected():
     local.register(tool)
     with pytest.raises(ValueError):
         local.register(tool)
+
+
+async def test_places_search_without_location_says_so_plainly(registry):
+    """Unguarded, the None coordinates went into the Overpass query as
+    `around:3000,None,None`, came back 400, and were reported as
+    "OpenStreetMap lookup failed" — a network fault, apparently, for a missing
+    permission the user can grant in one tap."""
+    from jarvis.tools.places_tool import places_search
+
+    result = await places_search(category="barber", ctx=ToolContext(timezone="UTC"))
+
+    assert not result.ok
+    assert "location" in result.error.lower()
+    assert "OpenStreetMap" not in result.error
