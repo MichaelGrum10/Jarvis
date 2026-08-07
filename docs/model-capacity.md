@@ -171,6 +171,30 @@ fastest by a wide margin. Its weakness is the per-minute token cap. Which matter
 more depends on how you use this, which is the whole reason for measuring rather
 than asserting.
 
+## A measured example
+
+Run on a real free-tier account, this is what came back:
+
+```
+groq:llama-3.3-70b-versatile    0.27s  ✗  ✗   fails at full size
+    HTTP 400: Failed to call a function. Please adjust your prompt
+groq:openai/gpt-oss-120b        0.27s  ✓  ✓   excellent
+```
+
+Same provider, same latency, and one of them cannot call a tool at all — not
+even a single-tool prompt. Reputation would have picked the 70B Llama; the
+measurement picked the other one.
+
+It also mattered more than it looks. That model was **first** in the ladder, so
+every turn failed on it and fell through to the one that worked: two wasted
+round-trips on every single request. The default order was changed on the back of
+this, and the client now backs a repeatedly-failing endpoint off further each
+time so a model that can't tool-call deprioritises itself without needing to be
+named.
+
+The lesson generalises: **benchmark your own account.** Which models work is not
+stable across providers, tiers or months.
+
 ## Choosing a better model
 
 Change the ladder:

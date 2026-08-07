@@ -36,6 +36,16 @@ GREEN, RED, YELLOW, DIM, BOLD, RESET = (
     "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
 )
 
+# Stands in for the real system prompt: same shape, same instruction to prefer
+# tools over guessing, without dragging the whole persona into a benchmark.
+SYSTEM_MESSAGE = {
+    "role": "system",
+    "content": (
+        "You are a personal assistant with access to tools. Use them rather than "
+        "guessing. Call the appropriate tool when one fits the request."
+    ),
+}
+
 # A tool the model must choose and fill in correctly. Deliberately unambiguous:
 # we are testing formatting ability, not judgement.
 TEST_TOOL = {
@@ -103,9 +113,16 @@ async def call(client: httpx.AsyncClient, endpoint, messages, tools, timeout=60.
     elapsed = time.monotonic() - started
     if response.status_code >= 400:
         try:
-            detail = response.json().get("error", {}).get("message", "")[:80]
+            error = response.json().get("error", {})
+            detail = error.get("message", "")
+            # Groq returns what the model actually emitted in failed_generation.
+            # That is the whole diagnosis for "Failed to call a function", so
+            # truncating it away leaves an error that says nothing actionable.
+            emitted = error.get("failed_generation")
+            if emitted:
+                detail += f" | model emitted: {str(emitted)[:160]}"
         except ValueError:
-            detail = response.text[:80]
+            detail = response.text[:200]
         return {"ok": False, "error": f"HTTP {response.status_code}: {detail}", "seconds": elapsed}
 
     try:
@@ -163,10 +180,13 @@ async def benchmark_endpoint(client: httpx.AsyncClient, endpoint) -> dict:
         row["error"] = plain["error"]
         return row
 
-    # 2. Tool calling with a small tool set.
+    # 2. Tool calling with a small tool set. A system prompt is included because
+    #    the real agent always sends one, and its presence measurably changes how
+    #    reliably some models format tool calls — testing without it would
+    #    measure a request shape this app never actually makes.
     small = await call(
         client, endpoint,
-        [{"role": "user", "content": "What is NVDA trading at right now?"}],
+        [SYSTEM_MESSAGE, {"role": "user", "content": "What is NVDA trading at right now?"}],
         tools=[TEST_TOOL],
     )
     if small["ok"]:
@@ -180,7 +200,7 @@ async def benchmark_endpoint(client: httpx.AsyncClient, endpoint) -> dict:
     # 3. The same call at realistic size — this is where per-minute caps bite.
     big = await call(
         client, endpoint,
-        [{"role": "user", "content": "What is NVDA trading at right now?"}],
+        [SYSTEM_MESSAGE, {"role": "user", "content": "What is NVDA trading at right now?"}],
         tools=[TEST_TOOL, *padding_tools(28)],
     )
     if big["ok"]:

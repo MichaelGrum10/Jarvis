@@ -341,3 +341,38 @@ def test_unconfigured_primary_is_ignored_not_fatal():
     pool = build_pool(settings(primary_provider="nonexistent"))
     assert len(pool) > 0
     assert pool.endpoints[0].label.startswith("groq:")
+
+
+async def test_a_model_that_cannot_tool_call_falls_out_of_rotation():
+    """Measured on a real account: llama-3.3-70b-versatile returns 400 "Failed to
+    call a function" on even a single-tool prompt. A fixed cooldown would have it
+    retried every few seconds forever — two wasted round-trips per turn. It has to
+    back off further each time so it deprioritises itself."""
+    client = GroqClient(settings(groq_model_ladder="broken,working"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                side_effect=[
+                    # broken: initial malformed call, then the nudge fails too
+                    httpx.Response(400, json=error_body(
+                        "Failed to call a function. tool call validation failed")),
+                    httpx.Response(400, json=error_body(
+                        "Failed to call a function. tool call validation failed")),
+                    # working: answers fine
+                    httpx.Response(200, json=ok_body("answered by the working model")),
+                ]
+            )
+            response = await client.complete(
+                [{"role": "user", "content": "hi"}], tools=[{"type": "function"}]
+            )
+            assert response.content == "answered by the working model"
+
+        broken = next(e for e in client.pool.endpoints if e.model == "broken")
+        first_cooldown = broken.seconds_until_available
+        assert first_cooldown > 1, "a repeatedly-failing endpoint must be rested"
+
+        # A second failure must back off further, not reset to the same pause.
+        broken.rest()
+        assert broken.seconds_until_available > first_cooldown
+    finally:
+        await client.aclose()

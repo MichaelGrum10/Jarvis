@@ -166,8 +166,12 @@ class GroqClient:
                 errors.append(f"{endpoint.label}: malformed tool call")
                 log.warning("Malformed tool call from %s: %s", endpoint.label, exc.detail)
                 if not nudged:
-                    # Give it exactly one corrective shot on the same endpoint:
-                    # this is usually a one-off formatting slip, not a broken model.
+                    # One corrective shot, because a formatting slip is sometimes
+                    # a one-off. But it is often not: some models simply cannot
+                    # do tool calling reliably and fail this way on every request.
+                    # Measured on a real account, llama-3.3-70b-versatile returns
+                    # 400 "Failed to call a function" on even a single-tool
+                    # prompt, so the nudge is a courtesy, not an expectation.
                     nudged = True
                     messages = messages + [
                         {
@@ -186,7 +190,14 @@ class GroqClient:
                         endpoint.succeeded()
                         return response
                     except Exception:
-                        endpoint.rest(10.0)
+                        # Escalating backoff rather than a fixed pause: an
+                        # endpoint that fails this way twice in a row is very
+                        # likely incapable, not unlucky, and a fixed rest would
+                        # have it retried every few seconds indefinitely — two
+                        # wasted round-trips on every turn. Backing off further
+                        # each time lets a broken model fall out of rotation on
+                        # its own, without needing to be identified by name.
+                        endpoint.rest()
 
             except _Upstream as exc:
                 endpoint.rest()

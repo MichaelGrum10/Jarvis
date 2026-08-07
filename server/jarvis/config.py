@@ -62,7 +62,14 @@ class Settings(BaseSettings):
     # here costs a wasted attempt on every single turn before failover moves on,
     # so `python -m jarvis.benchmark` lists what your key actually has and flags
     # entries it cannot reach.
-    groq_model_ladder: str = "llama-3.3-70b-versatile,openai/gpt-oss-120b"
+    # gpt-oss-120b leads on measured evidence, not reputation. On a real free-tier
+    # account llama-3.3-70b-versatile returns 400 "Failed to call a function" on
+    # even a single-tool request, while gpt-oss-120b handles a full 29-schema turn
+    # cleanly at the same latency. Since this assistant is tool calls end to end,
+    # a model that cannot make them is not a fallback — it is two wasted
+    # round-trips on every single turn before failover reaches something that
+    # works. Verify on your own account with: python -m jarvis.benchmark
+    groq_model_ladder: str = "openai/gpt-oss-120b,llama-3.3-70b-versatile"
 
     # --- other OpenAI-compatible providers (all optional, all free tiers) ---
     cerebras_api_key: str = ""
