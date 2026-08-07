@@ -13,6 +13,7 @@ never have served the request:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -25,9 +26,23 @@ from .pool import Endpoint, Pool, build_pool
 
 log = logging.getLogger(__name__)
 
+# How long to hold a request while waiting for a cooling endpoint. Chosen to be
+# longer than a per-minute rate-limit bucket typically needs, and well short of
+# the point where a user assumes the app has hung.
+MAX_WAIT_SECONDS = 20.0
+
 
 class LLMError(RuntimeError):
     pass
+
+
+def _humanise_wait(seconds: float) -> str:
+    """Seconds are fine up to a point; past it they're a number to decode."""
+    if seconds <= 1:
+        return " a few seconds"
+    if seconds < 90:
+        return f" about {int(seconds)}s"
+    return f" about {round(seconds / 60)} minutes"
 
 
 @dataclass
@@ -99,6 +114,14 @@ class _Upstream(Exception):
         super().__init__(detail)
 
 
+class _BadCredentials(Exception):
+    """The key was rejected. No amount of waiting changes that."""
+
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
 class GroqClient:
     """Named for its default provider, but any OpenAI-compatible endpoint works."""
 
@@ -139,6 +162,16 @@ class GroqClient:
         # An explicit model request bypasses the ladder but still uses the pool's
         # keys, so a caller asking for a specific model keeps the failover.
         candidates = self._candidates(model)
+
+        # Everything is resting. Failing instantly here was wrong: a rate-limit
+        # cooldown is usually seconds, and "no endpoint could answer" for a pool
+        # that will be ready before the user finishes reading the error is a
+        # self-inflicted outage. Wait for it instead — but only briefly, because
+        # a minute of silence is worse than a clear message.
+        if not candidates:
+            if await self._wait_for_capacity():
+                candidates = self._candidates(model)
+
         errors: list[str] = []
         nudged = False
 
@@ -201,12 +234,39 @@ class GroqClient:
                     except Exception:
                         endpoint.rest()
 
+            except _BadCredentials as exc:
+                endpoint.retire("key rejected")
+                errors.append(f"{endpoint.label}: key rejected")
+                log.warning("Key rejected by %s: %s", endpoint.label, exc.detail[:200])
+
             except _Upstream as exc:
                 endpoint.rest()
                 errors.append(f"{endpoint.label}: {exc.detail[:80]}")
                 log.warning("Upstream error on %s: %s", endpoint.label, exc.detail[:200])
 
         raise LLMError(self._exhausted_message(errors))
+
+    async def _wait_for_capacity(self) -> bool:
+        """Pause for a cooling endpoint, if one is coming back soon enough.
+
+        The ceiling matters in both directions. Too low and a four-second
+        rate-limit bucket produces a hard failure for no reason; too high and a
+        provider on a long daily cap leaves the user staring at nothing. Above
+        the ceiling the error is more useful than the wait.
+        """
+        soonest = self.pool.soonest()
+        if soonest is None:
+            return False  # everything retired; waiting cannot help
+
+        wait = soonest.seconds_until_available
+        if wait <= 0:
+            return True
+        if wait > MAX_WAIT_SECONDS:
+            return False
+
+        log.info("All endpoints cooling; waiting %.1fs for %s", wait, soonest.label)
+        await asyncio.sleep(wait + 0.1)
+        return True
 
     def _candidates(self, model: str | None) -> list[Endpoint]:
         ready = self.pool.ready()
@@ -237,8 +297,16 @@ class GroqClient:
         skipped = total - tried - len(retired)
 
         # A key or model problem is a configuration fault; waiting cannot fix it.
-        broken = [e for e in errors if "rate limited" not in e]
         rate_limited = [e for e in errors if "rate limited" in e]
+        # Retired endpoints get their own line naming the reason, so repeating
+        # them here says the same thing twice in different words.
+        # Matched by prefix rather than by splitting on ":" — model names contain
+        # colons of their own ("…llama-3.3-70b-instruct:free").
+        retired_labels = tuple(e.label for e in retired)
+        broken = [
+            e for e in errors
+            if "rate limited" not in e and not e.startswith(retired_labels)
+        ]
 
         parts: list[str] = []
         if tried:
@@ -248,6 +316,7 @@ class GroqClient:
         if retired:
             parts.append(f"{len(retired)} retired as unusable")
 
+        live = [e for e in self.pool.endpoints if not e.retired]
         lines = [f"No endpoint could answer ({', '.join(parts) or 'none available'})."]
 
         if broken:
@@ -261,12 +330,27 @@ class GroqClient:
                 + "; ".join(f"{e.label} ({e.retired})" for e in retired[:3])
                 + ". Remove them from your model ladder in .env."
             )
-        if rate_limited:
-            wait = self.pool.wait_hint()
-            when = f" about {int(wait)}s" if wait > 1 else " shortly"
-            lines.append(f"Rate limited:{when} until capacity returns.")
+        # The wait hint belongs on any outcome where something is coming back,
+        # not only on a rate limit. With nothing tried at all — every endpoint
+        # already cooling when the request arrived — it is the only actionable
+        # thing there is to say, and omitting it left "2 still cooling down" as
+        # the entire message.
+        if rate_limited or not tried:
+            if not live:
+                lines.append("Nothing is coming back on its own — every endpoint is out.")
+            else:
+                wait = self.pool.wait_hint()
+                when = _humanise_wait(wait)
+                # Naming the cause matters as much as the timing: "rate limited"
+                # tells you the key works and you are simply using it hard, which
+                # is a different problem from an endpoint that is broken.
+                cause = "Rate limited — capacity returns in" if rate_limited else "Capacity returns in"
+                lines.append(f"{cause}{when}. Try again then.")
 
-        if total - len(retired) <= 1:
+        # Advising more capacity only makes sense while some remains. With every
+        # endpoint retired the problem is that none of them work, and "add a
+        # second provider" reads as advice to paper over it.
+        if len(live) == 1:
             lines.append(
                 "You're on a single endpoint, so one busy minute stops everything. "
                 "A second provider gives independent capacity — see docs/model-capacity.md."
@@ -309,6 +393,12 @@ class GroqClient:
         except httpx.HTTPError as exc:
             raise _Upstream(f"{type(exc).__name__}: {exc}") from exc
 
+        if response.status_code == 401:
+            # Not a transient fault. Cooling a rejected key means retrying it on
+            # an ever-longer timer while it still counts as pool capacity — which
+            # is how a single bad key ends up reported as "2 endpoints cooling"
+            # on a pool that only ever had one working endpoint.
+            raise _BadCredentials(_error_message(response))
         if response.status_code == 429:
             raise _RateLimited(_retry_after(response))
         if response.status_code == 413:

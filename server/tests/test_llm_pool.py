@@ -618,3 +618,71 @@ def test_a_retired_endpoint_is_named_and_not_counted_as_capacity():
     assert "1 retired as unusable" in message
     assert "groq:model-0" in message
     assert "single endpoint" in message, "one live endpoint left is a capacity warning"
+
+
+async def test_a_brief_cooldown_is_waited_out_rather_than_failed():
+    """The reported bug: "No endpoint could answer (2 still cooling down)" for a
+    pool whose capacity returned four seconds later. Failing instantly when
+    everything is resting is a self-inflicted outage."""
+    client = GroqClient(settings(groq_model_ladder="a"))
+    client.pool.endpoints[0].rest(0.3)
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(200, json=ok_body("answered after waiting"))
+            )
+            response = await client.complete([{"role": "user", "content": "hi"}])
+        assert response.content == "answered after waiting"
+    finally:
+        await client.aclose()
+
+
+async def test_a_long_cooldown_is_reported_instead_of_waited_out():
+    """Beyond the ceiling the error is more use than the silence."""
+    client = GroqClient(settings(groq_model_ladder="a"))
+    client.pool.endpoints[0].rest(600.0)
+    try:
+        with pytest.raises(LLMError) as caught:
+            await client.complete([{"role": "user", "content": "hi"}])
+        assert "Capacity returns in" in str(caught.value)
+    finally:
+        await client.aclose()
+
+
+async def test_a_rejected_key_is_retired_not_cooled():
+    """A 401 never becomes a 200 by waiting. Cooling it means retrying on an
+    ever-longer timer while it still counts as capacity."""
+    client = GroqClient(settings(groq_model_ladder="a"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(401, json=error_body("Invalid API key"))
+            )
+            with pytest.raises(LLMError) as caught:
+                await client.complete([{"role": "user", "content": "hi"}])
+
+        assert client.pool.endpoints[0].retired == "key rejected"
+        assert "key rejected" in str(caught.value)
+        assert "Capacity returns" not in str(caught.value), (
+            "nothing is coming back — saying otherwise sends the user off to wait"
+        )
+    finally:
+        await client.aclose()
+
+
+async def test_a_rejected_key_does_not_take_a_working_one_down_with_it():
+    client = GroqClient(settings(groq_model_ladder="bad,good"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                side_effect=[
+                    httpx.Response(401, json=error_body("Invalid API key")),
+                    httpx.Response(200, json=ok_body("from the good one")),
+                ]
+            )
+            response = await client.complete([{"role": "user", "content": "hi"}])
+        assert response.content == "from the good one"
+        assert client.pool.endpoints[0].retired
+        assert not client.pool.endpoints[1].retired
+    finally:
+        await client.aclose()
