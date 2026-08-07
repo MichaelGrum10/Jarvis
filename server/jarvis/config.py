@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from pathlib import Path
 
@@ -11,10 +12,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = Path("/data") if Path("/data").is_dir() else REPO_ROOT / "data"
 
+# Overridable so the test suite can point somewhere empty. Without this, tests
+# silently inherit whatever is in the developer's real .env and fail in ways that
+# look like code bugs — which is exactly what happened while building this.
+ENV_FILE = Path(os.environ.get("JARVIS_ENV_FILE", REPO_ROOT / ".env"))
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(REPO_ROOT / ".env"), env_file_encoding="utf-8", extra="ignore"
+        env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore"
     )
 
     # --- core ---
@@ -30,6 +36,12 @@ class Settings(BaseSettings):
     auth_secret: str = Field("", description="Server signing secret (generate 32+ random chars)")
     access_password: str = Field("", description="Password you type once per device")
     token_ttl_days: int = 90
+
+    # Which provider answers first. Everything else becomes a backup — the pool
+    # is walked in order and stops at the first endpoint that responds, so a
+    # secondary is only reached when everything ahead of it is busy or failing.
+    # One of: groq, gemini, cerebras, openrouter, together, github, mistral.
+    primary_provider: str = "groq"
 
     # --- llm (groq free tier) ---
     groq_api_key: str = ""

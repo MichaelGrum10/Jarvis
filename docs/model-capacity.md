@@ -129,14 +129,42 @@ All free, all OpenAI-compatible, all drop into the pool with one line:
 | **OpenRouter** | <https://openrouter.ai/keys> | Aggregates many `:free` models — useful for trying things cheaply |
 | **Mistral** | <https://console.mistral.ai> | Solid tool calling, separate quota |
 
+### Adding one
+
+Get the key, then on the server:
+
 ```bash
-# .env — add any of these, they join the pool automatically
-GEMINI_API_KEY=AIza...
-CEREBRAS_API_KEY=csk_...
-GITHUB_MODELS_API_KEY=ghp_...
+cd ~/Jarvis
+bash scripts/setkey.sh GEMINI_API_KEY AIzaSy...
+docker compose up -d
 ```
 
-Then benchmark, and put whatever wins first in the ladder.
+`setkey.sh` writes it safely and replaces rather than duplicates on a re-run —
+editing `.env` by hand on a phone is miserable, and a stray duplicate line gives
+you a config that looks right and behaves unpredictably.
+
+### Primary and backup
+
+**Anything you add is a backup already.** The pool is walked in order and stops
+at the first endpoint that answers, so a secondary is only reached when
+everything ahead of it is rate limited or failing. There's no load balancing and
+no separate "backup" flag — position *is* priority.
+
+To flip which one leads:
+
+```bash
+bash scripts/setkey.sh PRIMARY_PROVIDER gemini
+docker compose up -d
+```
+
+That moves Gemini's endpoints to the front and Groq becomes the fallback. Each
+provider keeps its own best-first model order.
+
+Check the resulting order any time:
+
+```bash
+docker compose exec jarvis python -m jarvis.doctor    # lists the pool
+```
 
 **Groq's real advantage is speed** — it runs on custom silicon and is usually the
 fastest by a wide margin. Its weakness is the per-minute token cap. Which matters

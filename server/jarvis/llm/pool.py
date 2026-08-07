@@ -187,6 +187,36 @@ def build_pool(settings) -> Pool:
     for provider in _extra_providers(settings):
         pool.add(provider)
 
+    return _prioritise(pool, settings.primary_provider)
+
+
+def _prioritise(pool: Pool, primary: str) -> Pool:
+    """Move one provider's endpoints to the front.
+
+    Position in this list *is* the priority: the client walks it in order and
+    stops at the first endpoint that answers, so everything after the primary is
+    a backup by construction. There is no separate "backup" flag to set, and no
+    load balancing — a secondary is only ever reached when everything ahead of it
+    is rate limited or failing.
+
+    Ordering within each provider is preserved, so a primary's own model ladder
+    still runs best-first.
+    """
+    primary = (primary or "").strip().lower()
+    if not primary:
+        return pool
+
+    preferred = [e for e in pool.endpoints if e.label.split(":", 1)[0] == primary]
+    if not preferred:
+        # Naming a provider you haven't configured shouldn't silently do nothing
+        # different — but it also shouldn't be fatal, so log and carry on.
+        log.warning(
+            "PRIMARY_PROVIDER=%s has no configured endpoints; leaving order unchanged", primary
+        )
+        return pool
+
+    rest = [e for e in pool.endpoints if e not in preferred]
+    pool.endpoints = preferred + rest
     return pool
 
 

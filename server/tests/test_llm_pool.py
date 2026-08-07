@@ -306,3 +306,38 @@ def test_history_window_is_bounded():
     history = history_from_rows([Row(i) for i in range(40)])
     assert len(history) <= 12
     assert history[-1]["content"] == "message 39"
+
+
+# ---------------------------------------------------------------- priority
+
+
+def test_extra_providers_are_backups_by_default():
+    """Position in the pool *is* the priority — the client stops at the first
+    endpoint that answers, so anything after the primary is only ever reached
+    when everything ahead of it is busy."""
+    labels = [e.label for e in build_pool(settings(gemini_api_key="AIza")).endpoints]
+    assert labels[0].startswith("groq:")
+    assert labels[-1].startswith("gemini:")
+
+
+def test_primary_provider_moves_a_backup_to_the_front():
+    labels = [
+        e.label
+        for e in build_pool(settings(gemini_api_key="AIza", primary_provider="gemini")).endpoints
+    ]
+    assert labels[0].startswith("gemini:")
+    assert any(label.startswith("groq:") for label in labels[1:])
+
+
+def test_primary_provider_preserves_ladder_order_within_a_provider():
+    """Promoting a provider must not scramble its own best-first model order."""
+    pool = build_pool(settings(gemini_api_key="AIza", primary_provider="groq"))
+    groq_models = [e.model for e in pool.endpoints if e.label.startswith("groq:")]
+    assert groq_models == ["model-a", "model-b"]
+
+
+def test_unconfigured_primary_is_ignored_not_fatal():
+    """Naming a provider you never set up shouldn't take the assistant down."""
+    pool = build_pool(settings(primary_provider="nonexistent"))
+    assert len(pool) > 0
+    assert pool.endpoints[0].label.startswith("groq:")

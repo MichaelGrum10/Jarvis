@@ -11,6 +11,9 @@ import pytest
 _TMP = tempfile.mkdtemp(prefix="jarvis-test-")
 os.environ.update(
     {
+        # Point away from the repo's real .env so tests never inherit local
+        # credentials or settings. Must be set before jarvis.config imports.
+        "JARVIS_ENV_FILE": str(Path(_TMP) / "no-such.env"),
         "AUTH_SECRET": "test-secret-not-used-in-production-0123456789",
         "ACCESS_PASSWORD": "test-password",
         "GROQ_API_KEY": "test-key",
