@@ -140,7 +140,41 @@ async def call(client: httpx.AsyncClient, endpoint, messages, tools, timeout=60.
         "content": message.get("content") or "",
         "tool_calls": message.get("tool_calls") or [],
         "usage": data.get("usage", {}),
+        "limits": rate_limits(response),
     }
+
+
+def rate_limits(response) -> dict:
+    """The account's real quota, read off the response it just returned.
+
+    Published free-tier numbers go stale and vary by account, so the only figure
+    worth reporting is the one the provider just attached to your own request.
+    Providers that send no such headers simply report nothing, rather than being
+    guessed at.
+    """
+    out: dict[str, str] = {}
+    for field in ("requests", "tokens"):
+        for kind in ("limit", "remaining", "reset"):
+            value = response.headers.get(f"x-ratelimit-{kind}-{field}")
+            if value:
+                out[f"{kind}_{field}"] = value
+    return out
+
+
+def _describe_limits(limits: dict) -> str:
+    """One line, or nothing if the provider told us nothing."""
+    if not limits:
+        return ""
+    bits = []
+    for field in ("tokens", "requests"):
+        limit, remaining = limits.get(f"limit_{field}"), limits.get(f"remaining_{field}")
+        if limit:
+            used = f"{remaining} of {limit}" if remaining else limit
+            bits.append(f"{used} {field} left")
+    reset = limits.get("reset_tokens") or limits.get("reset_requests")
+    if reset:
+        bits.append(f"resets in {reset}")
+    return ", ".join(bits)
 
 
 def tool_call_correct(result: dict) -> tuple[bool, str]:
@@ -212,6 +246,7 @@ async def benchmark_endpoint(client: httpx.AsyncClient, endpoint) -> dict:
         row["tools_large_why"] = why
         row["large_latency"] = big["seconds"]
         row["prompt_tokens"] = big.get("usage", {}).get("prompt_tokens")
+        row["limits"] = big.get("limits") or {}
     else:
         row["tools_large"] = False
         row["tools_large_why"] = big["error"][:60]
@@ -376,6 +411,12 @@ async def main() -> int:
             value = row.get(key)
             if value and value != "correct":
                 print(f"    {DIM}{key.replace('_', ' ')}: {value}{RESET}")
+        quota = _describe_limits(row.get("limits") or {})
+        if quota:
+            print(f"    {DIM}quota: {quota}{RESET}")
+        used = row.get("prompt_tokens")
+        if used:
+            print(f"    {DIM}a full-size turn costs ~{used} input tokens here{RESET}")
 
     usable = [r for r in rows if r.get("tools_large")]
     print()
