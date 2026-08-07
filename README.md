@@ -247,7 +247,22 @@ Four ship built in — **morning brief**, **end of day**, **book appointment**,
 The instruction is plain English, so "check the calendar, then the inbox, lead
 with anything time-critical, under 150 words" is a complete skill.
 
-## Self-improvement
+## Continuous self-improvement
+
+Jarvis records every failure — tool errors, model errors, and requests where it
+said it *couldn't* do something. When one recurs, it diagnoses the root cause,
+fixes it on a branch, and runs the test suite.
+
+```bash
+IMPROVE_MODE=propose   # fix + test + notify you; you merge
+```
+
+It cannot make the model smarter — that comes from the provider. It fixes bugs,
+builds tools you keep asking for, and grows test coverage.
+[docs/self-improvement.md](docs/self-improvement.md) covers why `propose` is the
+default and what it can't see.
+
+## Self-improvement (manual)
 
 The AutoGPT-style part. Open the drawer → **Self-improve**, describe a goal, and
 Jarvis reads its own source, edits it, runs the test suite, reads the failures,

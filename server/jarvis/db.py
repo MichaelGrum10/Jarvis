@@ -185,6 +185,22 @@ class Skill(Base):
         return [t.strip() for t in (self.triggers or "").split(",") if t.strip()]
 
 
+class FailureEvent(Base):
+    """Something that went wrong, kept so self-improvement works on real problems
+    rather than invented ones."""
+
+    __tablename__ = "failure_events"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    kind: Mapped[str] = mapped_column(String(40), index=True)
+    tool: Mapped[str] = mapped_column(String(60), default="")
+    # Volatile parts stripped, so recurrences of one problem group together.
+    fingerprint: Mapped[str] = mapped_column(String(32), index=True)
+    detail: Mapped[str] = mapped_column(Text, default="")
+    request: Mapped[str] = mapped_column(Text, default="")
+    resolved: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, index=True)
+
+
 class AutonomyRun(Base):
     """One self-improvement / self-debug session."""
 

@@ -80,6 +80,47 @@ async def start_run(
     return {"run_id": run_id, "status": "queued"}
 
 
+@router.get("/health")
+async def improvement_health(device: CurrentDevice, days: int = 7):
+    """What has actually been going wrong, and what the engine would work on next.
+
+    Worth reading even with self-improvement off — it is the clearest picture of
+    where the assistant is failing you.
+    """
+    from ..agent.selfimprove import get_improver
+    from ..telemetry import top_issues
+
+    settings = get_settings()
+    issues = await top_issues(days=days, limit=10)
+    picked = await get_improver().pick_goal()
+
+    return {
+        "mode": settings.improve_mode,
+        "interval_hours": settings.improve_interval_hours,
+        "issues": issues,
+        "next_goal": picked[1].splitlines()[0] if picked else None,
+        "note": (
+            "Self-improvement fixes bugs, adds missing tools and speeds things up. "
+            "It cannot make the underlying model smarter — that comes from the "
+            "provider."
+        ),
+    }
+
+
+@router.post("/improve-now")
+async def improve_now(device: CurrentDevice):
+    """Run one improvement cycle immediately rather than waiting for the timer."""
+    from ..agent.selfimprove import get_improver
+
+    settings = get_settings()
+    if settings.improve_mode == "off":
+        raise HTTPException(
+            403,
+            "Self-improvement is off. Set IMPROVE_MODE=propose in .env and restart.",
+        )
+    return await get_improver().run_once()
+
+
 @router.get("/runs")
 async def list_runs(device: CurrentDevice, limit: int = 20):
     async with session_scope() as session:

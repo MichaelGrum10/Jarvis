@@ -40,8 +40,13 @@ async def lifespan(app: FastAPI):
         if missing:
             log.warning("%s is not configured — missing %s", feature, ", ".join(missing))
 
+    from .agent.selfimprove import get_improver
+
+    get_improver().start()
+
     log.info("Jarvis ready")
     yield
+    await get_improver().stop()
     await get_llm().aclose()
 
 

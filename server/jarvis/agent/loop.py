@@ -16,6 +16,7 @@ from typing import Any
 from ..config import Settings, get_settings
 from ..llm.client import LLMError, get_llm
 from ..skills import match_skill, skill_preamble
+from ..telemetry import record_failure, record_if_refusal
 from ..tools.base import ToolContext, ToolResult, registry
 from ..tools.memory_tool import memory_preamble
 from .prompts import build_system_prompt
@@ -120,6 +121,7 @@ class Agent:
             try:
                 response = await self.llm.complete(messages, tool_schemas)
             except LLMError as exc:
+                await record_failure("llm_error", str(exc), request=user_message)
                 yield AgentEvent("error", {"message": str(exc), "step": step})
                 return
 
@@ -127,6 +129,10 @@ class Agent:
                 reply = response.content.strip()
                 if not reply:
                     reply = "I didn't get a usable response from the model. Try rephrasing?"
+                # A refusal for lack of capability is the strongest signal for a
+                # missing feature, and it is invisible in an error log because
+                # technically nothing failed.
+                await record_if_refusal(user_message, reply)
                 yield AgentEvent("final", {"reply": reply, "step": step})
                 return
 
@@ -177,6 +183,11 @@ class Agent:
                         "content": result.for_model(),
                     }
                 )
+                if not result.ok:
+                    await record_failure(
+                        "tool_failure", result.error, request=user_message, tool=call.name
+                    )
+
                 yield AgentEvent(
                     "tool_end",
                     {

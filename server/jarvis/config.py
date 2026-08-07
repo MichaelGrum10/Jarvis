@@ -110,6 +110,21 @@ class Settings(BaseSettings):
     wake_word: str = "jarvis"
     require_wake_word: bool = False
 
+    # --- continuous self-improvement ---
+    # off     : nothing runs
+    # propose : fix on a branch, run tests, notify you — you merge  (default)
+    # apply   : merge automatically when tests pass
+    #
+    # 'propose' is the default because the risk isn't bad code — tests catch most
+    # of that — it's the assistant breaking itself overnight and taking your
+    # email and calendar access with it. A branch awaiting review costs minutes.
+    improve_mode: str = "off"
+    improve_interval_hours: int = 12
+    improve_lookback_days: int = 7
+    # Don't start work the instant the process boots; it may have just restarted
+    # because of the previous cycle, and settling first avoids a restart loop.
+    improve_startup_delay_seconds: int = 300
+
     # --- autonomy ---
     autonomy_enabled: bool = False
     autonomy_repo_path: Path = REPO_ROOT
