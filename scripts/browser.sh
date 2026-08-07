@@ -33,7 +33,7 @@ case "${1:-}" in
     printf "\n${GREEN}✓ Browser reader on${RESET}\n"
     note "Next: sign in to the site on your own phone or laptop, export the"
     note "cookies, and import them with:"
-    note "  bash scripts/browser.sh session <file>.json"
+    note "  bash scripts/browser.sh session cookies.json"
     note "Full walkthrough: docs/browser.md"
     ;;
 
@@ -45,7 +45,7 @@ case "${1:-}" in
 
   session)
     FILE="${2:-}"
-    [ -n "$FILE" ] || fail "Usage: bash scripts/browser.sh session <cookies.json>"
+    [ -n "$FILE" ] || fail "Usage: bash scripts/browser.sh session cookies.json"
     [ -f "$FILE" ] || fail "No such file: $FILE"
 
     TOKEN="$(bash scripts/token.sh 2>/dev/null | tr -d '[:space:]')" \
@@ -73,6 +73,6 @@ case "${1:-}" in
     ;;
 
   *)
-    fail "Usage: bash scripts/browser.sh on|off|status|session <cookies.json>"
+    fail "Usage: bash scripts/browser.sh on|off|status|session cookies.json"
     ;;
 esac

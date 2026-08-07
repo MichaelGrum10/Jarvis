@@ -184,7 +184,8 @@ async def _check_pool(report: Report) -> None:
         report.bad(
             "Configured models", f"not available to your key: {', '.join(missing)}",
             "Pick a replacement from that provider's list below, then:\n"
-            "bash scripts/setkey.sh <PROVIDER>_MODEL <model-id> && docker compose up -d",
+            "bash scripts/setkey.sh GROQ_MODEL the-model-id   (or GEMINI_MODEL, CEREBRAS_MODEL)\n"
+            "docker compose up -d",
         )
     if unverified:
         report.warn(

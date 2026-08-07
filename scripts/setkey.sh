@@ -15,7 +15,9 @@ cd "$(dirname "$0")/.."
 GREEN='\033[32m'; RED='\033[31m'; YELLOW='\033[33m'; DIM='\033[2m'; RESET='\033[0m'
 fail() { printf "${RED}%s${RESET}\n" "$1" >&2; exit 1; }
 
-[ $# -ge 2 ] || fail "Usage: bash scripts/setkey.sh NAME value"
+[ $# -ge 2 ] || fail "Usage: bash scripts/setkey.sh NAME value
+       e.g. bash scripts/setkey.sh CEREBRAS_API_KEY csk-abc123
+       Type the value plainly — no < > around it, those are shell redirects."
 [ -f .env ] || fail "No .env here. Run: bash scripts/setup.sh"
 
 NAME="$1"
