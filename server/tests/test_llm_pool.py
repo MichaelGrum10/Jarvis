@@ -686,3 +686,49 @@ async def test_a_rejected_key_does_not_take_a_working_one_down_with_it():
         assert not client.pool.endpoints[1].retired
     finally:
         await client.aclose()
+
+
+@pytest.mark.parametrize(
+    ("status", "reason"),
+    [
+        (401, "key rejected"),
+        (402, "needs a paid plan"),
+        (403, "key has no access to this model"),
+        (404, "model does not exist on this provider"),
+    ],
+)
+async def test_permanent_faults_retire_with_their_own_reason(status, reason):
+    """A 402 is not a busy minute. Cooling it retries a guaranteed failure while
+    the endpoint still counts as capacity — and each of these needs a different
+    action from the user, so the reason has to survive."""
+    client = GroqClient(settings(groq_model_ladder="a"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(status, json=error_body("provider said no"))
+            )
+            with pytest.raises(LLMError) as caught:
+                await client.complete([{"role": "user", "content": "hi"}])
+
+        assert client.pool.endpoints[0].retired == reason
+        assert reason in str(caught.value)
+        assert "Capacity returns" not in str(caught.value)
+    finally:
+        await client.aclose()
+
+
+async def test_a_billing_wall_does_not_stop_a_working_provider():
+    client = GroqClient(settings(groq_model_ladder="paid,free"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                side_effect=[
+                    httpx.Response(402, json=error_body("Payment required")),
+                    httpx.Response(200, json=ok_body("the free one answered")),
+                ]
+            )
+            response = await client.complete([{"role": "user", "content": "hi"}])
+        assert response.content == "the free one answered"
+        assert client.pool.endpoints[0].retired == "needs a paid plan"
+    finally:
+        await client.aclose()

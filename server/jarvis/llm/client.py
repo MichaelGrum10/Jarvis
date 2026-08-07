@@ -115,10 +115,16 @@ class _Upstream(Exception):
 
 
 class _BadCredentials(Exception):
-    """The key was rejected. No amount of waiting changes that."""
+    """A fault no amount of waiting fixes: rejected key, billing, missing model.
 
-    def __init__(self, detail: str) -> None:
+    `reason` is the short form shown to the user; `detail` keeps the provider's
+    own wording for the log, since "Payment required to access this resource"
+    tells you more than "unusable" ever could.
+    """
+
+    def __init__(self, detail: str, reason: str = "key rejected") -> None:
         self.detail = detail
+        self.reason = reason
         super().__init__(detail)
 
 
@@ -235,9 +241,9 @@ class GroqClient:
                         endpoint.rest()
 
             except _BadCredentials as exc:
-                endpoint.retire("key rejected")
-                errors.append(f"{endpoint.label}: key rejected")
-                log.warning("Key rejected by %s: %s", endpoint.label, exc.detail[:200])
+                endpoint.retire(exc.reason)
+                errors.append(f"{endpoint.label}: {exc.reason}")
+                log.warning("%s unusable: %s", endpoint.label, exc.detail[:200])
 
             except _Upstream as exc:
                 endpoint.rest()
@@ -393,12 +399,20 @@ class GroqClient:
         except httpx.HTTPError as exc:
             raise _Upstream(f"{type(exc).__name__}: {exc}") from exc
 
-        if response.status_code == 401:
-            # Not a transient fault. Cooling a rejected key means retrying it on
-            # an ever-longer timer while it still counts as pool capacity — which
-            # is how a single bad key ends up reported as "2 endpoints cooling"
-            # on a pool that only ever had one working endpoint.
-            raise _BadCredentials(_error_message(response))
+        # None of these are transient. Cooling them means retrying a guaranteed
+        # failure on an ever-longer timer while the endpoint still counts as pool
+        # capacity — which is how one dead endpoint gets reported as "cooling
+        # down", implying it is coming back when it never will. Each needs a
+        # different action from the user, so the reason is carried through rather
+        # than flattened into "unusable".
+        permanent = {
+            401: "key rejected",
+            402: "needs a paid plan",
+            403: "key has no access to this model",
+            404: "model does not exist on this provider",
+        }.get(response.status_code)
+        if permanent:
+            raise _BadCredentials(f"{permanent}: {_error_message(response)}", permanent)
         if response.status_code == 429:
             raise _RateLimited(_retry_after(response))
         if response.status_code == 413:

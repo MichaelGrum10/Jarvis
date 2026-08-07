@@ -85,10 +85,10 @@ class Settings(BaseSettings):
     # --- other OpenAI-compatible providers (all optional, all free tiers) ---
     cerebras_api_key: str = ""
     cerebras_base_url: str = "https://api.cerebras.ai/v1"
-    # Confirmed present on a real free-tier account, not assumed: llama-3.3-70b
-    # was the previous default and has since been retired there, which surfaces
-    # as "your key cannot reach this model" on a key that is perfectly valid.
-    # Check what yours actually offers with: python -m jarvis.benchmark
+    # Cerebras lists models to a free key that it will not actually serve one:
+    # the catalogue call succeeds, and the first completion returns 402 "Payment
+    # required". So a working key here is not evidence of a usable endpoint —
+    # only `python -m jarvis.benchmark`, which makes a real call, settles it.
     cerebras_model: str = "gpt-oss-120b"
 
     openrouter_api_key: str = ""

@@ -1,5 +1,21 @@
 # Getting more capacity (and a better model)
 
+## A valid key is not a usable endpoint
+
+Providers advertise free tiers that their API then declines to serve. Cerebras
+will accept a free key, authenticate it, and list its full model catalogue — and
+then return `402 Payment required` on the first actual completion. Nothing about
+the key was wrong; the account simply cannot call the model.
+
+This is why `python -m jarvis.benchmark` makes a real request rather than
+checking credentials. A key that authenticates, a model that appears in the
+catalogue, and an endpoint that answers are three separate things, and only the
+third one is worth anything.
+
+Jarvis retires an endpoint that returns 401, 402, 403 or 404 rather than cooling
+it, since none of those recover on their own, and reports which of the four it
+was — they need different fixes.
+
 ## The problem, precisely
 
 Every turn sends a system prompt plus ~30 tool schemas before you've said
