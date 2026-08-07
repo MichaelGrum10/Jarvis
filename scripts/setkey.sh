@@ -41,6 +41,40 @@ esac
 WARNED=0
 warn_shape() { WARNED=1; printf "${YELLOW}! %s${RESET}\n" "$1"; }
 
+# A name that isn't a real setting is the worst failure mode here: pydantic is
+# configured with extra="ignore", so .env gains a line, the write reports
+# success, and the setting does nothing — with no error anywhere to explain it.
+# The field names are read out of config.py by regex rather than by importing
+# jarvis, so this works on the host with nothing installed and whether or not
+# the container is running.
+UNKNOWN="$(NAME="$NAME" python3 - <<'PY'
+import os, pathlib, re, sys
+
+source = pathlib.Path("server/jarvis/config.py")
+if not source.is_file():
+    sys.exit(0)  # Not a full checkout — nothing to validate against.
+
+fields = {m.upper() for m in re.findall(r"^    ([a-z][a-z0-9_]*)\s*:", source.read_text(), re.M)}
+name = os.environ["NAME"]
+if not fields or name in fields:
+    sys.exit(0)
+
+# Suggest by shared word, which is what a transposition looks like:
+# VOICE_MATCH_REQUIRED and REQUIRE_VOICE_MATCH share three.
+words = set(name.split("_"))
+ranked = sorted(fields, key=lambda f: -len(words & set(f.split("_"))))
+near = [f for f in ranked if words & set(f.split("_"))][:4]
+
+print(f"{name} isn't a setting Jarvis reads — it will be written to .env and ignored.")
+if near:
+    print("Did you mean: " + ", ".join(near))
+PY
+)"
+
+if [ -n "$UNKNOWN" ]; then
+  while IFS= read -r line; do warn_shape "$line"; done <<<"$UNKNOWN"
+fi
+
 case "$NAME" in
   GEMINI_API_KEY)
     # Google hands out several credential types that all look like "the key",

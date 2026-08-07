@@ -369,6 +369,77 @@ def check_config(report: Report) -> None:
     else:
         report.ok("Autonomy", "disabled")
 
+    # Reported from the running process, not from .env. Editing .env without
+    # `docker compose up -d` is the usual reason a setting looks on and isn't:
+    # the file says one thing and the container is still running the old value.
+    mode = settings.improve_mode
+    if mode == "off":
+        report.warn(
+            "Self-improvement", "off — no fixes will be proposed",
+            "bash scripts/setkey.sh IMPROVE_MODE propose && docker compose up -d",
+        )
+    elif mode == "propose":
+        report.ok(
+            "Self-improvement",
+            f"propose — every {settings.improve_interval_hours}h, on a branch for you to merge",
+        )
+    elif mode == "apply":
+        report.warn(
+            "Self-improvement",
+            f"apply — merges its own changes every {settings.improve_interval_hours}h when tests pass",
+        )
+    else:
+        report.bad(
+            "Self-improvement", f"unknown mode {mode!r}",
+            "IMPROVE_MODE must be one of: off, propose, apply",
+        )
+
+
+async def check_voice(report: Report) -> None:
+    header("Voice identity")
+    from sqlalchemy import select
+
+    from .db import SpeakerProfile, session_scope
+
+    settings = get_settings()
+
+    async with session_scope() as session:
+        profile = (
+            await session.execute(select(SpeakerProfile).limit(1))
+        ).scalar_one_or_none()
+
+    enrolled = profile is not None and profile.sample_count > 0
+    if enrolled:
+        report.ok(
+            "Enrolled voice",
+            f"{profile.sample_count} samples, consistency {profile.cohesion:.2f}",
+        )
+    else:
+        report.warn(
+            "Enrolled voice", "nothing enrolled",
+            "Open the HUD (☰ → Open HUD) and tap 'Enrol voice'. Three samples minimum.",
+        )
+
+    # The pairing is what matters: enforcement without a profile locks nobody
+    # out, and a profile without enforcement guards nothing. Either alone reads
+    # as configured while doing nothing.
+    if settings.require_voice_match and not enrolled:
+        report.bad(
+            "Voice matching", "required, but no voice is enrolled",
+            "Every voice request will be refused until you enrol.",
+        )
+    elif settings.require_voice_match:
+        report.ok("Voice matching", f"enforced at threshold {settings.voice_match_threshold}")
+    elif enrolled:
+        report.warn(
+            "Voice matching", "enrolled but not enforced — anyone's voice is answered",
+            "bash scripts/setkey.sh REQUIRE_VOICE_MATCH true && docker compose up -d",
+        )
+    else:
+        report.ok("Voice matching", "off")
+
+    report.ok("Wake word", f"{settings.wake_word!r}" + ("" if settings.require_wake_word else " (optional)"))
+
 
 async def main() -> int:
     print(f"{BOLD}Jarvis doctor{RESET}")
@@ -380,6 +451,7 @@ async def main() -> int:
     await check_mail(report)
     await check_calendar(report)
     await check_messages(report)
+    await check_voice(report)
     await check_outbound(report)
 
     print()
