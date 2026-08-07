@@ -489,3 +489,58 @@ def test_keys_are_trimmed(raw):
     hint that whitespace is the cause."""
     pool = build_pool(settings(groq_api_key=raw, groq_model_ladder="m"))
     assert pool.endpoints[0].api_key == "gsk_padded"
+
+
+GEMINI = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def two_provider_client() -> GroqClient:
+    """Groq plus Gemini, so a per-provider mistake has somewhere to show up."""
+    client = GroqClient(settings())
+    client.pool = Pool([
+        Endpoint(model="model-a", api_key="gsk_primary", base_url=GROQ, label="groq:model-a"),
+        Endpoint(
+            model="gemini-2.0-flash", api_key="AQ.key", base_url=GEMINI,
+            label="gemini:gemini-2.0-flash",
+        ),
+    ])
+    return client
+
+
+def models_body(*ids):
+    return {"data": [{"id": i} for i in ids]}
+
+
+@pytest.mark.parametrize(
+    "listed",
+    ["gemini-2.0-flash", "models/gemini-2.0-flash"],
+    ids=["bare", "namespaced"],
+)
+@pytest.mark.asyncio
+async def test_google_namespace_prefix_still_matches_the_configured_model(listed):
+    """Google lists `models/gemini-2.0-flash` but accepts `gemini-2.0-flash`.
+    A literal comparison calls a working model missing."""
+    from jarvis.llm.client import normalise_model_id
+
+    client = two_provider_client()
+    with respx.mock:
+        respx.get(f"{GROQ}/models").mock(return_value=httpx.Response(200, json=models_body("model-a")))
+        respx.get(f"{GEMINI}/models").mock(return_value=httpx.Response(200, json=models_body(listed)))
+        by_provider = await client.list_models_by_provider()
+
+    available = {normalise_model_id(m) for m in by_provider[GEMINI]}
+    assert normalise_model_id("gemini-2.0-flash") in available
+
+
+@pytest.mark.asyncio
+async def test_one_providers_catalogue_never_answers_for_another():
+    """Gemini's listing fails; Groq's succeeds. Gemini's model is unproven, not
+    missing — merging the two catalogues would report it as unavailable."""
+    client = two_provider_client()
+    with respx.mock:
+        respx.get(f"{GROQ}/models").mock(return_value=httpx.Response(200, json=models_body("model-a")))
+        respx.get(f"{GEMINI}/models").mock(return_value=httpx.Response(401, json=error_body("bad key")))
+        by_provider = await client.list_models_by_provider()
+
+    assert set(by_provider[GROQ]) == {"model-a"}
+    assert GEMINI not in by_provider, "an unreadable catalogue must be absent, not empty"

@@ -116,6 +116,31 @@ async def check_groq(report: Report) -> None:
     await _check_pool(report)
 
 
+def classify_models(
+    endpoints, by_provider: dict[str, dict]
+) -> tuple[list[str], list[str]]:
+    """Split endpoints into 'the key genuinely can't reach this' and 'unproven'.
+
+    Each endpoint is judged only against its own provider's catalogue, and only
+    when that catalogue was readable at all. Merging providers lets Groq's list
+    answer for Gemini; treating an unreadable list as an empty one reports every
+    model on that provider as missing. Both send you to fix a model name that was
+    never the problem — the usual cause is the key, one level up.
+    """
+    from .llm.client import normalise_model_id
+
+    missing, unverified = [], []
+    for endpoint in endpoints:
+        catalogue = by_provider.get(endpoint.base_url)
+        if catalogue is None:
+            unverified.append(endpoint.label)
+        elif normalise_model_id(endpoint.model) not in {
+            normalise_model_id(m) for m in catalogue
+        }:
+            missing.append(f"{endpoint.label} ({endpoint.model})")
+    return sorted(missing), sorted(unverified)
+
+
 async def _check_pool(report: Report) -> None:
     """Show the endpoint pool and what the configured keys can actually reach.
 
@@ -139,33 +164,44 @@ async def _check_pool(report: Report) -> None:
         report.ok(f"  {entry['label']}", f"key {entry['key']}, {state}")
 
     try:
-        models = await client.list_available_models()
+        by_provider = await client.list_models_by_provider()
     except Exception as exc:
         report.warn("Model list", f"could not fetch: {type(exc).__name__}")
         return
 
-    if not models:
-        report.warn("Model list", "provider returned none")
+    if not by_provider:
+        report.warn("Model list", "no provider returned a catalogue")
         return
 
-    configured = {e.model for e in client.pool.endpoints}
-    missing = sorted(m for m in configured if m not in {x["id"] for x in models})
+    missing, unverified = classify_models(client.pool.endpoints, by_provider)
     if missing:
         report.bad(
             "Configured models", f"not available to your key: {', '.join(missing)}",
-            "Edit GROQ_MODEL_LADDER in .env to models from the list below.",
+            "Pick a replacement from that provider's list below, then:\n"
+            "bash scripts/setkey.sh <PROVIDER>_MODEL <model-id> && docker compose up -d",
+        )
+    if unverified:
+        report.warn(
+            "Model list", f"could not be read for: {', '.join(unverified)}",
+            "Usually a rejected key. The model names themselves are unproven either way.",
         )
 
-    tool_capable = [
-        m["id"] for m in models
-        if not any(skip in m["id"].lower() for skip in ("whisper", "tts", "guard", "embed"))
-    ]
-    report.ok("Models available", f"{len(tool_capable)} usable for chat")
-    for model_id in tool_capable[:14]:
-        marker = " *" if model_id in configured else ""
-        print(f"      {DIM}{model_id}{marker}{RESET}")
-    if len(tool_capable) > 14:
-        print(f"      {DIM}… and {len(tool_capable) - 14} more{RESET}")
+    # Listed per provider rather than merged, for the same reason as above: what
+    # you can switch a Gemini endpoint to is whatever Gemini offers, and a
+    # combined list makes Groq's models look like candidates for it.
+    configured = {e.model for e in client.pool.endpoints}
+    for base_url, catalogue in sorted(by_provider.items()):
+        host = base_url.split("//")[-1].split("/")[0]
+        chat_models = sorted(
+            m for m in catalogue
+            if not any(skip in m.lower() for skip in ("whisper", "tts", "guard", "embed"))
+        )
+        report.ok(host, f"{len(chat_models)} models usable for chat")
+        for model_id in chat_models[:12]:
+            marker = " *" if model_id in configured else ""
+            print(f"      {DIM}{model_id}{marker}{RESET}")
+        if len(chat_models) > 12:
+            print(f"      {DIM}… and {len(chat_models) - 12} more{RESET}")
     print(f"      {DIM}* currently in your ladder{RESET}")
 
 

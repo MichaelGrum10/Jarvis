@@ -333,6 +333,31 @@ class GroqClient:
         confident-sounding nonsense. Better to read it from the provider.
         """
         seen: dict[str, dict] = {}
+        for base_url, models in (await self.list_models_by_provider()).items():
+            provider = base_url.split("//")[-1].split("/")[0]
+            for model_id, item in models.items():
+                if model_id not in seen:
+                    seen[model_id] = {
+                        "id": model_id,
+                        "provider": provider,
+                        "context_window": item.get("context_window"),
+                        "owned_by": item.get("owned_by"),
+                    }
+        return sorted(seen.values(), key=lambda m: m["id"])
+
+    async def list_models_by_provider(self) -> dict[str, dict[str, dict]]:
+        """Same data, but kept per base URL rather than merged into one set.
+
+        Which provider a model came from is the whole question when checking
+        whether a configured model exists: merged, Groq's catalogue "answers"
+        for Gemini, and every Gemini model reads as missing whenever Gemini's
+        own listing call is the one that failed.
+
+        A base URL absent from the result means its listing could not be read
+        at all — that is not the same as "it offers nothing", and callers must
+        not treat it as evidence about any model.
+        """
+        found: dict[str, dict[str, dict]] = {}
         client = await self._http()
 
         for base_url, api_key in {(e.base_url, e.api_key) for e in self.pool.endpoints}:
@@ -344,19 +369,28 @@ class GroqClient:
                 )
                 if response.status_code >= 400:
                     continue
-                for item in response.json().get("data", []):
-                    model_id = item.get("id")
-                    if model_id and model_id not in seen:
-                        seen[model_id] = {
-                            "id": model_id,
-                            "provider": base_url.split("//")[-1].split("/")[0],
-                            "context_window": item.get("context_window"),
-                            "owned_by": item.get("owned_by"),
-                        }
+                payload = response.json().get("data", [])
             except (httpx.HTTPError, ValueError):
                 continue
 
-        return sorted(seen.values(), key=lambda m: m["id"])
+            models: dict[str, dict] = {}
+            for item in payload:
+                model_id = item.get("id")
+                if model_id:
+                    models[model_id] = item
+            found[base_url] = models
+
+        return found
+
+
+def normalise_model_id(model_id: str) -> str:
+    """Strip the namespace some providers put in front of a model name.
+
+    Google's OpenAI-compatible layer lists ids as `models/gemini-2.0-flash`
+    while accepting `gemini-2.0-flash` in requests, so a literal comparison
+    reports a model that works perfectly well as unavailable.
+    """
+    return model_id.split("/", 1)[1] if model_id.startswith("models/") else model_id
 
 
 def _retry_after(response: httpx.Response) -> float | None:

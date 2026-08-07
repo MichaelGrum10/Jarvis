@@ -30,7 +30,7 @@ import time
 import httpx
 
 from .config import get_settings
-from .llm.client import error_payload
+from .llm.client import error_payload, normalise_model_id
 from .llm.pool import build_pool
 
 GREEN, RED, YELLOW, DIM, BOLD, RESET = (
@@ -287,7 +287,9 @@ async def main() -> int:
 
     missing = [
         e for e in pool.endpoints
-        if e.base_url in catalogue and e.model not in catalogue[e.base_url]
+        if e.base_url in catalogue
+        and normalise_model_id(e.model)
+        not in {normalise_model_id(m) for m in catalogue[e.base_url]}
     ]
     if missing:
         print(f"{YELLOW}Configured models your key cannot reach:{RESET}")
