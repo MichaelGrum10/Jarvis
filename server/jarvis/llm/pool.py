@@ -201,6 +201,10 @@ def _extra_providers(settings) -> list[Endpoint]:
         (settings.cerebras_api_key, settings.cerebras_base_url, settings.cerebras_model, "cerebras"),
         (settings.openrouter_api_key, settings.openrouter_base_url, settings.openrouter_model, "openrouter"),
         (settings.together_api_key, settings.together_base_url, settings.together_model, "together"),
+        (settings.gemini_api_key, settings.gemini_base_url, settings.gemini_model, "gemini"),
+        (settings.github_models_api_key, settings.github_models_base_url,
+         settings.github_models_model, "github"),
+        (settings.mistral_api_key, settings.mistral_base_url, settings.mistral_model, "mistral"),
     ):
         for index, key in enumerate(split_keys(key_raw)):
             suffix = f" #{index + 1}" if index else ""

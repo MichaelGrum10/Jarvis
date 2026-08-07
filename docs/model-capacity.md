@@ -93,6 +93,56 @@ anyway, with none of the ambiguity — which is why it's the recommendation abov
 
 ---
 
+## Is there something better than Groq?
+
+Probably, for your purposes — but measure it rather than take anyone's word,
+including mine. Free tiers, model names and rate limits change constantly, so
+any ranking written into a document is stale within months.
+
+```bash
+docker compose exec jarvis python -m jarvis.benchmark
+```
+
+That tests every provider you've configured on requests shaped like the ones
+this assistant actually sends, and reports three things:
+
+| | why it matters |
+|---|---|
+| **latency** | how long a turn takes |
+| **tool calling** | can it pick a tool and format the call correctly |
+| **at full size** | does it survive a ~29-schema turn, where token caps bite |
+
+Tool calling is weighted above speed on purpose. This assistant is tool calls
+almost end to end, so a fast model that fumbles them is unusable — that is
+exactly the failure that produced `attempted to call tool 'calendar_list
+{"start": "today"}'`.
+
+### The candidates worth trying
+
+All free, all OpenAI-compatible, all drop into the pool with one line:
+
+| Provider | Get a key | Why it might beat Groq |
+|---|---|---|
+| **Google AI Studio** | <https://aistudio.google.com/apikey> | The Flash models reason better than Llama 3.3 70B, and the ~1M token context makes the schema budget that constrains everything here simply stop mattering. Probably the biggest single upgrade available free. |
+| **Cerebras** | <https://cloud.cerebras.ai> | Comparable models, often faster than Groq |
+| **GitHub Models** | <https://github.com/settings/tokens> | Frontier GPT-class models free for GitHub accounts. Tight limits, so best kept as a last resort for hard questions |
+| **OpenRouter** | <https://openrouter.ai/keys> | Aggregates many `:free` models — useful for trying things cheaply |
+| **Mistral** | <https://console.mistral.ai> | Solid tool calling, separate quota |
+
+```bash
+# .env — add any of these, they join the pool automatically
+GEMINI_API_KEY=AIza...
+CEREBRAS_API_KEY=csk_...
+GITHUB_MODELS_API_KEY=ghp_...
+```
+
+Then benchmark, and put whatever wins first in the ladder.
+
+**Groq's real advantage is speed** — it runs on custom silicon and is usually the
+fastest by a wide margin. Its weakness is the per-minute token cap. Which matters
+more depends on how you use this, which is the whole reason for measuring rather
+than asserting.
+
 ## Choosing a better model
 
 Change the ladder:

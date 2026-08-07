@@ -62,6 +62,26 @@ class Settings(BaseSettings):
     together_api_key: str = ""
     together_base_url: str = "https://api.together.xyz/v1"
     together_model: str = "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"
+
+    # Google AI Studio. Likely the single biggest upgrade available free: the
+    # Flash models reason better than Llama 3.3 70B and carry a ~1M token context,
+    # which makes the tool-schema budget that constrains everything else here
+    # simply stop mattering. Google exposes an OpenAI-compatible endpoint, so it
+    # slots into the same pool with no special handling.
+    gemini_api_key: str = ""
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
+    gemini_model: str = "gemini-2.0-flash"
+
+    # GitHub Models — free for GitHub accounts, and the way to reach frontier
+    # models (GPT-class) without paying. Rate limits are tight, so it earns its
+    # place as a last resort for hard questions rather than the everyday default.
+    github_models_api_key: str = ""
+    github_models_base_url: str = "https://models.inference.ai.azure.com"
+    github_models_model: str = "gpt-4o-mini"
+
+    mistral_api_key: str = ""
+    mistral_base_url: str = "https://api.mistral.ai/v1"
+    mistral_model: str = "mistral-large-latest"
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.3
     # Whisper on Groq: free with the same key, and better than the browser engines.
