@@ -85,7 +85,11 @@ class Settings(BaseSettings):
     # --- other OpenAI-compatible providers (all optional, all free tiers) ---
     cerebras_api_key: str = ""
     cerebras_base_url: str = "https://api.cerebras.ai/v1"
-    cerebras_model: str = "llama-3.3-70b"
+    # Confirmed present on a real free-tier account, not assumed: llama-3.3-70b
+    # was the previous default and has since been retired there, which surfaces
+    # as "your key cannot reach this model" on a key that is perfectly valid.
+    # Check what yours actually offers with: python -m jarvis.benchmark
+    cerebras_model: str = "gpt-oss-120b"
 
     openrouter_api_key: str = ""
     openrouter_base_url: str = "https://openrouter.ai/api/v1"

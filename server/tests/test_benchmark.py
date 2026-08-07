@@ -230,3 +230,20 @@ async def test_one_broken_provider_does_not_discard_the_whole_run():
 
     assert row["reachable"] is False
     assert "list-shaped" in row["error"]
+
+
+def test_a_missing_model_names_its_own_providers_setting():
+    """Telling someone to edit GROQ_MODEL_LADDER because a Cerebras model was
+    retired sends them to a setting unrelated to the failure."""
+    from jarvis.benchmark import _setting_for
+    from jarvis.llm.pool import Endpoint
+
+    def at(url):
+        return Endpoint(model="m", api_key="k", base_url=url)
+
+    assert _setting_for(at("https://api.groq.com/openai/v1")) == "GROQ_MODEL_LADDER"
+    assert _setting_for(at("https://api.cerebras.ai/v1")) == "CEREBRAS_MODEL"
+    assert _setting_for(
+        at("https://generativelanguage.googleapis.com/v1beta/openai")
+    ) == "GEMINI_MODEL"
+    assert _setting_for(at("https://models.inference.ai.azure.com")) == "GITHUB_MODELS_MODEL"

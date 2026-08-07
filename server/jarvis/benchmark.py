@@ -245,6 +245,34 @@ def verdict(row: dict) -> str:
     return f"{YELLOW}usable but slow{RESET}"
 
 
+# Matched on the base URL rather than the label: a label is only reliably a
+# provider name when build_pool set it, and the fallback one is derived from the
+# hostname's first component — "api" for most of these.
+_PROVIDER_BY_HOST = (
+    ("api.groq.com", "GROQ_MODEL_LADDER"),
+    ("api.cerebras.ai", "CEREBRAS_MODEL"),
+    ("openrouter.ai", "OPENROUTER_MODEL"),
+    ("api.together.xyz", "TOGETHER_MODEL"),
+    ("generativelanguage.googleapis.com", "GEMINI_MODEL"),
+    ("models.inference.ai.azure.com", "GITHUB_MODELS_MODEL"),
+    ("models.github.ai", "GITHUB_MODELS_MODEL"),
+    ("api.mistral.ai", "MISTRAL_MODEL"),
+)
+
+
+def _setting_for(endpoint) -> str:
+    """Which .env setting controls this endpoint's model.
+
+    Naming the right provider matters: telling someone to edit GROQ_MODEL_LADDER
+    because a *Cerebras* model was retired sends them to a setting that has
+    nothing to do with the failure, and leaves the one they need unmentioned.
+    """
+    for host, setting in _PROVIDER_BY_HOST:
+        if host in endpoint.base_url:
+            return setting
+    return f"{endpoint.label.split(':', 1)[0].upper()}_MODEL"
+
+
 async def available_models(client: httpx.AsyncClient, pool) -> dict[str, set[str]]:
     """Ask each provider what its key can actually reach, keyed by base URL.
 
@@ -294,8 +322,10 @@ async def main() -> int:
     if missing:
         print(f"{YELLOW}Configured models your key cannot reach:{RESET}")
         for endpoint in missing:
-            print(f"  {RED}✗{RESET} {endpoint.model}")
-        print(f"{DIM}  Remove these from GROQ_MODEL_LADDER in .env.{RESET}\n")
+            print(f"  {RED}✗{RESET} {endpoint.label}")
+            print(f"{DIM}      fix: bash scripts/setkey.sh {_setting_for(endpoint)} "
+                  f"a-model-from-the-list-below{RESET}")
+        print()
 
     for base_url, models in catalogue.items():
         host = base_url.split("//")[-1].split("/")[0]
