@@ -27,16 +27,45 @@ BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || fail "Not a git check
 BEFORE="$(git rev-parse HEAD)"
 
 say "Fetching $BRANCH…"
-# Retry: a dropped connection mid-fetch is common on small cloud instances and
-# is not a reason to make someone re-run the whole thing by hand.
+# Fetch and merge as separate steps. Combined, any failure looks like a network
+# failure — and the most common one isn't: a locally modified tracked file makes
+# --ff-only refuse, which retrying four times cannot fix and which "could not
+# reach GitHub" actively misdirects.
 for delay in 2 4 8 0; do
-  if git pull --ff-only origin "$BRANCH"; then
+  if git fetch origin "$BRANCH" 2>/tmp/jarvis-fetch-err; then
     break
   fi
-  [ "$delay" -eq 0 ] && fail "Could not reach GitHub after four attempts."
+  if [ "$delay" -eq 0 ]; then
+    printf "${RED}Could not reach GitHub after four attempts.${RESET}\n" >&2
+    sed 's/^/  /' /tmp/jarvis-fetch-err >&2
+    exit 1
+  fi
   note "Retrying in ${delay}s…"
   sleep "$delay"
 done
+
+# Local edits to tracked files. Anything under .gitignore — .env, data — is
+# unaffected and never at risk here.
+DIRTY="$(git diff --name-only HEAD 2>/dev/null || true)"
+if [ -n "$DIRTY" ] && ! git merge-base --is-ancestor HEAD FETCH_HEAD 2>/dev/null; then
+  : # diverged as well; the merge below reports it properly
+fi
+
+if ! git merge --ff-only FETCH_HEAD 2>/tmp/jarvis-merge-err; then
+  printf "${RED}Pulled from GitHub, but couldn't apply the update.${RESET}\n" >&2
+  sed 's/^/  /' /tmp/jarvis-merge-err >&2
+
+  if [ -n "$DIRTY" ]; then
+    printf "\n${YELLOW}These tracked files have local edits:${RESET}\n" >&2
+    printf '%s\n' "$DIRTY" | sed 's/^/  /' >&2
+    printf "\n${DIM}Your .env and data are not affected — they aren't tracked.${RESET}\n" >&2
+    printf "${DIM}To discard those edits and take the new version:${RESET}\n" >&2
+    printf "  git checkout -- %s && bash scripts/update.sh\n" "$(printf '%s' "$DIRTY" | tr '\n' ' ')" >&2
+    printf "${DIM}To keep them for later instead:${RESET}\n" >&2
+    printf "  git stash && bash scripts/update.sh\n" >&2
+  fi
+  exit 1
+fi
 
 AFTER="$(git rev-parse HEAD)"
 

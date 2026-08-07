@@ -15,7 +15,7 @@ services:
       # Point search at the bundled SearXNG rather than scraping DuckDuckGo.
       SEARXNG_URL: http://searxng:8080
       # Where the self-improvement engine works. Only meaningful with the
-      # ./:/app/repo mount above uncommented.
+      # repo mount that scripts/self-improve.sh adds.
       AUTONOMY_REPO_PATH: /app/repo
     # Docker's default 64MB of shared memory makes Chromium crash on heavy pages.
     # Harmless when the browser is off; costs nothing until used.
@@ -23,10 +23,9 @@ services:
     volumes:
       - jarvis-data:/data
       # Self-improvement needs a real git repo to branch and commit in, and the
-      # image deliberately doesn't contain .git. Uncomment both lines below —
-      # together with AUTONOMY_ENABLED=true in .env — to give it this checkout.
-      # Leave commented and autonomy stays off, which is the default.
-      # - ./:/app/repo:rw
+      # image deliberately doesn't contain .git. `bash scripts/self-improve.sh`
+      # adds that mount via docker-compose.override.yml — don't add it here, as
+      # this file is tracked and a local edit collides with every update.
     ports:
       # Bound to localhost: Caddy terminates TLS and proxies in. Never expose
       # 8000 straight to the internet — the whole app is behind one password.

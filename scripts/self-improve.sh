@@ -37,6 +37,10 @@ esac
 if [ "$MODE" = "off" ]; then
   bash scripts/setkey.sh IMPROVE_MODE off >/dev/null
   bash scripts/setkey.sh AUTONOMY_ENABLED false >/dev/null
+  if [ -f docker-compose.override.yml ] && grep -q '/app/repo' docker-compose.override.yml; then
+    rm -f docker-compose.override.yml
+    note "Removed the repo mount"
+  fi
   printf "${GREEN}✓ Self-improvement off${RESET}\n"
   note "Apply it with: docker compose up -d"
   exit 0
@@ -59,22 +63,33 @@ bash scripts/setkey.sh AUTONOMY_ENABLED true >/dev/null
 note "AUTONOMY_ENABLED=true"
 
 step "3/3  Giving it this checkout to work in"
-if grep -qE '^\s*-\s*\./:/app/repo:rw' docker-compose.yml; then
+
+# Written to docker-compose.override.yml, which Compose merges automatically and
+# git ignores. Editing docker-compose.yml directly is what the first version did,
+# and it was wrong: that file is tracked, so the edit collided with every
+# subsequent update and made `git pull` refuse — reported, unhelpfully, as a
+# network failure.
+if [ -f docker-compose.yml ] && grep -qE '^\s*-\s*\./:/app/repo:rw' docker-compose.yml; then
+  note "Reverting the old in-place edit to docker-compose.yml"
+  git checkout -- docker-compose.yml 2>/dev/null \
+    || note "Couldn't revert it automatically — run: git checkout -- docker-compose.yml"
+fi
+
+if [ -f docker-compose.override.yml ] && grep -q '/app/repo' docker-compose.override.yml; then
   note "Already mounted."
 else
-  # Uncomment in place rather than appending: the line already exists commented
-  # out, and adding a second one under a different key produces a compose file
-  # that looks right and merges wrong.
-  python3 - <<'PY' || fail "Could not edit docker-compose.yml — uncomment './:/app/repo:rw' by hand."
-import pathlib, re
-path = pathlib.Path("docker-compose.yml")
-text = path.read_text()
-patched, count = re.subn(r"^(\s*)#\s*(-\s*\./:/app/repo:rw\s*)$", r"\1\2", text, flags=re.M)
-if count != 1:
-    raise SystemExit(1)
-path.write_text(patched)
-PY
-  note "Mounted ./ at /app/repo"
+  [ -f docker-compose.override.yml ] && cp docker-compose.override.yml docker-compose.override.yml.bak
+  cat > docker-compose.override.yml <<'YAML'
+# Written by scripts/self-improve.sh. Compose merges this over
+# docker-compose.yml automatically; git ignores it, so it survives updates.
+# Remove this file (or run `bash scripts/self-improve.sh off`) to take the
+# checkout away from the self-improvement engine.
+services:
+  jarvis:
+    volumes:
+      - ./:/app/repo:rw
+YAML
+  note "Mounted ./ at /app/repo via docker-compose.override.yml"
 fi
 
 step "Restarting"

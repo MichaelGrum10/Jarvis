@@ -30,3 +30,7 @@ venv/
 # Caddy/searxng runtime
 caddy-data/
 searxng/uwsgi.ini
+
+# Local compose overrides (written by scripts/self-improve.sh)
+docker-compose.override.yml
+docker-compose.override.yml.bak
