@@ -161,7 +161,7 @@ async def test_exhausted_pool_explains_itself_without_raw_json():
                 await client.complete([{"role": "user", "content": "hi"}])
             message = str(exc.value)
             assert '{"error"' not in message
-            assert "rate limited" in message
+            assert "rate limited" in message.lower()
     finally:
         await client.aclose()
 
@@ -174,7 +174,7 @@ async def test_single_key_exhaustion_suggests_a_second_provider():
             respx.post(f"{GROQ}/chat/completions").mock(
                 return_value=httpx.Response(429, json=error_body("rate limited"))
             )
-            with pytest.raises(LLMError, match="single API key"):
+            with pytest.raises(LLMError, match="single endpoint"):
                 await client.complete([{"role": "user", "content": "hi"}])
     finally:
         await client.aclose()
@@ -432,3 +432,60 @@ async def test_gemini_shaped_error_surfaces_through_the_pool():
             assert "API key not valid" in str(exc.value)
     finally:
         await client.aclose()
+
+
+# ---------------------------------------------------------------- exhaustion
+
+
+async def test_exhaustion_separates_misconfigured_from_busy():
+    """A rejected key is not a busy one. Telling someone to wait 20s for a
+    credential that will never become valid sends them the wrong way entirely."""
+    client = GroqClient(settings(groq_model_ladder="model-a", gemini_api_key="AIza_bad"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(429, json=error_body("rate limited"))
+            )
+            respx.post("https://generativelanguage.googleapis.com/v1beta/openai/chat/completions").mock(
+                return_value=httpx.Response(400, json=[{"error": {"message": "Please pass a valid API key"}}])
+            )
+            with pytest.raises(LLMError) as exc:
+                await client.complete([{"role": "user", "content": "hi"}])
+
+        message = str(exc.value)
+        assert "misconfigured" in message
+        assert "valid API key" in message
+        assert "won't recover on their own" in message
+    finally:
+        await client.aclose()
+
+
+async def test_endpoints_still_cooling_are_not_counted_as_tried():
+    """An endpoint skipped because it is resting was never attempted; reporting
+    it as a failure overstates what happened and hides the real cause."""
+    client = GroqClient(settings(groq_model_ladder="model-a,model-b"))
+    try:
+        # Put the first endpoint to sleep without it participating in this call.
+        client.pool.endpoints[0].rest(60)
+
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(429, json=error_body("rate limited"))
+            )
+            with pytest.raises(LLMError) as exc:
+                await client.complete([{"role": "user", "content": "hi"}])
+
+        message = str(exc.value)
+        assert "tried 1 of 2" in message
+        assert "cooling down" in message
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("raw", ["  gsk_padded  ", "gsk_padded\n", "\tgsk_padded"])
+def test_keys_are_trimmed(raw):
+    """A trailing newline from a phone paste survives .env quoting and reaches
+    the Authorization header, where it is rejected as an invalid key with no
+    hint that whitespace is the cause."""
+    pool = build_pool(settings(groq_api_key=raw, groq_model_ladder="m"))
+    assert pool.endpoints[0].api_key == "gsk_padded"

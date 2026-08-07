@@ -21,6 +21,11 @@ fail() { printf "${RED}%s${RESET}\n" "$1" >&2; exit 1; }
 NAME="$1"
 shift
 VALUE="$*"
+# Strip leading/trailing whitespace. A trailing space or newline from a phone
+# paste survives .env quoting and reaches the Authorization header verbatim,
+# where providers reject it as an invalid key — with no hint that whitespace is
+# the cause.
+VALUE="$(printf '%s' "$VALUE" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
 
 printf '%s' "$NAME" | grep -qE '^[A-Z][A-Z0-9_]*$' \
   || fail "Setting names are UPPER_SNAKE_CASE, e.g. GEMINI_API_KEY"

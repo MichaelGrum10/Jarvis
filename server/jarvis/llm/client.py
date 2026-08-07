@@ -214,20 +214,51 @@ class GroqClient:
         return ready
 
     def _exhausted_message(self, errors: list[str]) -> str:
-        wait = self.pool.wait_hint()
-        detail = "; ".join(errors[:4]) or "no endpoints available"
+        """Explain what actually happened, and whether waiting will help.
+
+        Two distinctions matter here and both were previously lost. An endpoint
+        still cooling down from an earlier failure is skipped before it is ever
+        tried, so counting it among the failures overstates what was attempted.
+        And a rejected key is not a busy one: telling someone to wait twenty
+        seconds for a credential that will never become valid sends them in
+        precisely the wrong direction.
+        """
+        tried = len(errors)
+        resting = [e for e in self.pool.endpoints if not e.available]
+
+        # A key or model problem is a configuration fault; waiting cannot fix it.
+        broken = [e for e in errors if "rate limited" not in e]
+        rate_limited = [e for e in errors if "rate limited" in e]
+
+        parts: list[str] = []
+        if tried:
+            parts.append(f"tried {tried} of {len(self.pool)} endpoints")
+        if resting and len(resting) != tried:
+            skipped = len(resting) - sum(1 for e in errors if "rate limited" in e)
+            if skipped > 0:
+                parts.append(f"{skipped} still cooling down from earlier failures")
+
+        lines = [f"No endpoint could answer ({', '.join(parts) or 'none available'})."]
+
+        if broken:
+            lines.append(
+                "These look misconfigured rather than busy, and won't recover on their "
+                f"own: {'; '.join(broken[:3])}."
+            )
+        if rate_limited:
+            wait = self.pool.wait_hint()
+            when = f" about {int(wait)}s" if wait > 1 else " shortly"
+            lines.append(f"Rate limited:{when} until capacity returns.")
 
         if len(self.pool) == 1:
-            advice = (
-                "You're running on a single API key, so one busy minute stops everything. "
-                "Adding a second provider (Cerebras and OpenRouter both have free tiers) "
-                "gives independent capacity — see docs/model-capacity.md."
+            lines.append(
+                "You're on a single endpoint, so one busy minute stops everything. "
+                "A second provider gives independent capacity — see docs/model-capacity.md."
             )
-        else:
-            advice = f"All {len(self.pool)} endpoints are busy or failing."
+        elif broken:
+            lines.append("Check them with: docker compose exec jarvis python -m jarvis.benchmark")
 
-        timing = f" Try again in about {int(wait)}s." if wait > 1 else ""
-        return f"{advice} ({detail}).{timing}"
+        return " ".join(lines)
 
     # ---------------------------------------------------------------- request
 

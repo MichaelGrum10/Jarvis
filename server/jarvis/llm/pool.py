@@ -143,6 +143,9 @@ def split_keys(raw: str) -> list[str]:
     """Parse a comma/whitespace separated key list, preserving order."""
     if not raw:
         return []
+    # split() on whitespace also strips a trailing newline or stray space from a
+    # pasted key — which otherwise survives .env quoting, lands in the
+    # Authorization header, and gets rejected as an invalid key.
     parts = [p.strip() for chunk in raw.split(",") for p in chunk.split()]
     seen: set[str] = set()
     out: list[str] = []
@@ -163,9 +166,7 @@ def build_pool(settings) -> Pool:
     """
     pool = Pool()
 
-    groq_keys = split_keys(settings.groq_api_keys) or (
-        [settings.groq_api_key] if settings.groq_api_key else []
-    )
+    groq_keys = split_keys(settings.groq_api_keys) or split_keys(settings.groq_api_key)
     models = [m.strip() for m in settings.groq_model_ladder.split(",") if m.strip()]
     if not models:
         models = [settings.groq_model]
