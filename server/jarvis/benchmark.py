@@ -80,17 +80,21 @@ def padding_tools(count: int) -> list[dict]:
 
 async def call(client: httpx.AsyncClient, endpoint, messages, tools, timeout=60.0) -> dict:
     started = time.monotonic()
+
+    # Both keys are omitted entirely when there are no tools. Sending
+    # "tool_choice": null is rejected outright — Groq answers 400 "Only allowed
+    # string values for 'tool_choice' are [none, auto, required]" — which made
+    # every endpoint look unreachable when the problem was the benchmark.
+    payload: dict = {"model": endpoint.model, "messages": messages, "max_tokens": 300}
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+
     try:
         response = await client.post(
             f"{endpoint.base_url.rstrip('/')}/chat/completions",
             headers={"Authorization": f"Bearer {endpoint.api_key}"},
-            json={
-                "model": endpoint.model,
-                "messages": messages,
-                "tools": tools,
-                "tool_choice": "auto" if tools else None,
-                "max_tokens": 300,
-            },
+            json=payload,
             timeout=timeout,
         )
     except httpx.HTTPError as exc:
@@ -194,6 +198,15 @@ async def benchmark_endpoint(client: httpx.AsyncClient, endpoint) -> dict:
 
 def verdict(row: dict) -> str:
     if not row.get("reachable"):
+        error = row.get("error", "")
+        # "Unreachable" for what is really a bad key or a retired model sends
+        # people debugging their network instead of their config.
+        if "401" in error or "403" in error:
+            return f"{RED}key rejected{RESET}"
+        if "404" in error:
+            return f"{RED}model not available{RESET}"
+        if "400" in error:
+            return f"{RED}request rejected{RESET}"
         return f"{RED}unreachable{RESET}"
     if not row.get("tools_large"):
         # Fine for chat, unusable here — this assistant is tool calls almost end
@@ -209,6 +222,31 @@ def verdict(row: dict) -> str:
     return f"{YELLOW}usable but slow{RESET}"
 
 
+async def available_models(client: httpx.AsyncClient, pool) -> dict[str, set[str]]:
+    """Ask each provider what its key can actually reach, keyed by base URL.
+
+    Worth doing before testing anything: a model name that has been renamed or
+    retired returns 404, which is indistinguishable from a broken provider in the
+    results table. Better to say "that model doesn't exist on your account" than
+    to report the endpoint as unreachable.
+    """
+    found: dict[str, set[str]] = {}
+    for base_url, api_key in {(e.base_url, e.api_key) for e in pool.endpoints}:
+        try:
+            response = await client.get(
+                f"{base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=20.0,
+            )
+            if response.status_code < 400:
+                found[base_url] = {
+                    m.get("id") for m in response.json().get("data", []) if m.get("id")
+                }
+        except (httpx.HTTPError, ValueError):
+            continue
+    return found
+
+
 async def main() -> int:
     settings = get_settings()
     pool = build_pool(settings)
@@ -221,11 +259,41 @@ async def main() -> int:
         print(f"{RED}No endpoints configured.{RESET} Set GROQ_API_KEY in .env.")
         return 1
 
+    async with httpx.AsyncClient() as client:
+        catalogue = await available_models(client, pool)
+
+    missing = [
+        e for e in pool.endpoints
+        if e.base_url in catalogue and e.model not in catalogue[e.base_url]
+    ]
+    if missing:
+        print(f"{YELLOW}Configured models your key cannot reach:{RESET}")
+        for endpoint in missing:
+            print(f"  {RED}✗{RESET} {endpoint.model}")
+        print(f"{DIM}  Remove these from GROQ_MODEL_LADDER in .env.{RESET}\n")
+
+    for base_url, models in catalogue.items():
+        host = base_url.split("//")[-1].split("/")[0]
+        chat_models = sorted(
+            m for m in models
+            if not any(skip in m.lower() for skip in ("whisper", "tts", "guard", "embed"))
+        )
+        print(f"{BOLD}{host}{RESET} {DIM}— {len(chat_models)} chat models available{RESET}")
+        for model in chat_models[:12]:
+            marker = f" {GREEN}(in your ladder){RESET}" if any(
+                e.model == model for e in pool.endpoints
+            ) else ""
+            print(f"  {DIM}{model}{RESET}{marker}")
+        if len(chat_models) > 12:
+            print(f"  {DIM}… and {len(chat_models) - 12} more{RESET}")
+        print()
+
     # Sequential on purpose: running these in parallel would have the providers
     # rate-limiting each other's measurements and produce nonsense.
+    testable = [e for e in pool.endpoints if e not in missing]
     async with httpx.AsyncClient() as client:
         rows = []
-        for endpoint in pool.endpoints:
+        for endpoint in testable:
             print(f"{DIM}testing {endpoint.label}…{RESET}", flush=True)
             rows.append(await benchmark_endpoint(client, endpoint))
 

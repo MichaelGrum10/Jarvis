@@ -46,9 +46,11 @@ class Settings(BaseSettings):
     # them produces malformed calls the provider rejects outright. Small "fast"
     # models are deliberately absent — they have the tightest token-per-minute
     # caps, so they fail on exactly the large requests a fallback exists to catch.
-    groq_model_ladder: str = (
-        "llama-3.3-70b-versatile,openai/gpt-oss-120b,moonshotai/kimi-k2-instruct"
-    )
+    # Only models verified to exist on Groq's free tier. Anything unreachable
+    # here costs a wasted attempt on every single turn before failover moves on,
+    # so `python -m jarvis.benchmark` lists what your key actually has and flags
+    # entries it cannot reach.
+    groq_model_ladder: str = "llama-3.3-70b-versatile,openai/gpt-oss-120b"
 
     # --- other OpenAI-compatible providers (all optional, all free tiers) ---
     cerebras_api_key: str = ""

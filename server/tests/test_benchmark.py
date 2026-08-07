@@ -156,3 +156,60 @@ async def test_unreachable_endpoint_stops_early():
 
     assert row["reachable"] is False
     assert "401" in row["error"]
+
+
+# ---------------------------------------------------------------- regressions
+
+
+async def test_latency_probe_omits_tool_choice_entirely():
+    """The bug that made every endpoint report 'unreachable'. With no tools,
+    sending "tool_choice": null is rejected outright:
+    400 "Only allowed string values for 'tool_choice' are [none, auto, required]".
+    Both keys must be absent, not null."""
+    endpoint = Endpoint(model="m", api_key="k", base_url=BASE)
+    seen: list[dict] = []
+
+    def capture(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=api_text_response())
+
+    with respx.mock:
+        respx.post(f"{BASE}/chat/completions").mock(side_effect=capture)
+        async with httpx.AsyncClient() as client:
+            from jarvis.benchmark import call
+            await call(client, endpoint, [{"role": "user", "content": "hi"}], tools=None)
+
+    assert "tool_choice" not in seen[0], "null tool_choice is a 400 on Groq"
+    assert "tools" not in seen[0]
+
+
+async def test_tool_probe_does_send_tool_choice():
+    endpoint = Endpoint(model="m", api_key="k", base_url=BASE)
+    seen: list[dict] = []
+
+    def capture(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=api_tool_response())
+
+    with respx.mock:
+        respx.post(f"{BASE}/chat/completions").mock(side_effect=capture)
+        async with httpx.AsyncClient() as client:
+            from jarvis.benchmark import TEST_TOOL, call
+            await call(client, endpoint, [{"role": "user", "content": "hi"}], tools=[TEST_TOOL])
+
+    assert seen[0]["tool_choice"] == "auto"
+
+
+@pytest.mark.parametrize(
+    "error,expected",
+    [
+        ("HTTP 404: The model `x` does not exist", "model not available"),
+        ("HTTP 401: invalid api key", "key rejected"),
+        ("HTTP 400: Only allowed string values for 'tool_choice'", "request rejected"),
+        ("ConnectError", "unreachable"),
+    ],
+)
+def test_config_errors_are_not_reported_as_unreachable(error, expected):
+    """Calling a retired model or a bad key 'unreachable' sends people debugging
+    their network instead of their .env."""
+    assert expected in verdict({"reachable": False, "error": error})
