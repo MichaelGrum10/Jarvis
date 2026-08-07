@@ -180,6 +180,29 @@ partial iPhone route and is explicit about what it can't do.
 
 ---
 
+## Updating
+
+```bash
+cd ~/Jarvis && bash scripts/update.sh
+```
+
+Pulls, rebuilds, and confirms the app answers before saying it worked.
+
+Don't use `git pull && docker compose up -d` for this. The server code is baked
+into the image at build time rather than mounted from the checkout, so the pull
+updates the files on disk while the container carries on running the previous
+build. Both commands report success and nothing has changed — the usual way this
+surfaces is a fix that demonstrably isn't applied. `up -d` on its own *is* right
+for `.env` changes; compose recreates the container when those change.
+
+Then check the result over:
+
+```bash
+docker compose exec jarvis python -m jarvis.doctor
+```
+
+---
+
 ## Using it
 
 Ask normally. Jarvis picks its own tools.

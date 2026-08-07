@@ -130,5 +130,9 @@ cd ~/Jarvis && git pull
 **Pulling updates later:**
 
 ```bash
-cd ~/Jarvis && git pull && docker compose up -d --build
+cd ~/Jarvis && bash scripts/update.sh
 ```
+
+That pulls, rebuilds the image, and checks the app came back up. `git pull` on
+its own is not enough — the code is baked into the image, so the pull succeeds
+and the container keeps running the old build.
