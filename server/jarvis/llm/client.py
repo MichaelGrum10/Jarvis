@@ -338,6 +338,34 @@ def _retry_after(response: httpx.Response) -> float | None:
         return None
 
 
+def error_payload(response: httpx.Response) -> dict:
+    """Normalise a provider error body to a dict, whatever shape it arrived in.
+
+    There is no agreed format. OpenAI and Groq send {"error": {...}}; Google's
+    OpenAI-compatible endpoint sends that wrapped in a *list*; some send a bare
+    string, or FastAPI-style {"detail": ...}. Assuming a dict and calling .get()
+    on it crashes outright on the list form, which is exactly what happened the
+    first time a Gemini key was added.
+    """
+    try:
+        body = response.json()
+    except ValueError:
+        return {}
+
+    # Gemini wraps its error object in a single-element array.
+    if isinstance(body, list):
+        body = next((item for item in body if isinstance(item, dict)), {})
+    if not isinstance(body, dict):
+        return {}
+
+    error = body.get("error", body)
+    if isinstance(error, str):
+        return {"message": error}
+    if not isinstance(error, dict):
+        return {}
+    return error
+
+
 def _error_message(response: httpx.Response) -> str:
     """Pull the human sentence out of a provider error.
 
@@ -345,10 +373,10 @@ def _error_message(response: httpx.Response) -> str:
     organisation IDs and service-tier names. None of that helps the person
     reading it in a chat window, so it's stripped down to the actionable part.
     """
-    try:
-        message = response.json().get("error", {}).get("message", "")
-    except (ValueError, AttributeError):
-        message = ""
+    error = error_payload(response)
+    message = error.get("message") or error.get("detail") or ""
+    if not isinstance(message, str):
+        message = str(message)
     if not message:
         return response.text[:200]
 

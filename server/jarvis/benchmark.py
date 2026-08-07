@@ -30,6 +30,7 @@ import time
 import httpx
 
 from .config import get_settings
+from .llm.client import error_payload
 from .llm.pool import build_pool
 
 GREEN, RED, YELLOW, DIM, BOLD, RESET = (
@@ -112,16 +113,18 @@ async def call(client: httpx.AsyncClient, endpoint, messages, tools, timeout=60.
 
     elapsed = time.monotonic() - started
     if response.status_code >= 400:
-        try:
-            error = response.json().get("error", {})
-            detail = error.get("message", "")
-            # Groq returns what the model actually emitted in failed_generation.
-            # That is the whole diagnosis for "Failed to call a function", so
-            # truncating it away leaves an error that says nothing actionable.
-            emitted = error.get("failed_generation")
-            if emitted:
-                detail += f" | model emitted: {str(emitted)[:160]}"
-        except ValueError:
+        # Shared with the client so both cope with every provider's error shape —
+        # notably Gemini's, which wraps the error object in a list and crashed a
+        # naive .get() the first time a Google key was configured.
+        error = error_payload(response)
+        detail = str(error.get("message") or error.get("detail") or "")[:200]
+        # Groq returns what the model actually emitted in failed_generation.
+        # That is the whole diagnosis for "Failed to call a function", so
+        # truncating it away leaves an error that says nothing actionable.
+        emitted = error.get("failed_generation")
+        if emitted:
+            detail += f" | model emitted: {str(emitted)[:160]}"
+        if not detail:
             detail = response.text[:200]
         return {"ok": False, "error": f"HTTP {response.status_code}: {detail}", "seconds": elapsed}
 
@@ -315,7 +318,20 @@ async def main() -> int:
         rows = []
         for endpoint in testable:
             print(f"{DIM}testing {endpoint.label}…{RESET}", flush=True)
-            rows.append(await benchmark_endpoint(client, endpoint))
+            try:
+                rows.append(await benchmark_endpoint(client, endpoint))
+            except Exception as exc:
+                # One provider behaving unexpectedly must not discard the results
+                # for every other one. Losing a whole run to a single bad
+                # response is precisely what a crash here cost before.
+                rows.append(
+                    {
+                        "label": endpoint.label,
+                        "model": endpoint.model,
+                        "reachable": False,
+                        "error": f"{type(exc).__name__}: {exc}"[:120],
+                    }
+                )
 
     print(f"\n{BOLD}{'endpoint':<44}{'latency':>9}{'tools':>8}{'@full':>8}  verdict{RESET}")
     print("─" * 88)

@@ -376,3 +376,59 @@ async def test_a_model_that_cannot_tool_call_falls_out_of_rotation():
         assert broken.seconds_until_available > first_cooldown
     finally:
         await client.aclose()
+
+
+# ---------------------------------------------------------------- error shapes
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ({"error": {"message": "rate limited", "code": "x"}}, "rate limited"),
+        # Google's OpenAI-compatible endpoint wraps the error object in a list.
+        # Assuming a dict and calling .get() on this crashed outright the first
+        # time a Gemini key was configured.
+        ([{"error": {"message": "API key not valid", "code": 400}}], "API key not valid"),
+        ({"error": "something went wrong"}, "something went wrong"),
+        ({"detail": "Not Found"}, "Not Found"),
+        ({"message": "flat form"}, "flat form"),
+    ],
+)
+def test_every_provider_error_shape_is_understood(body, expected):
+    from jarvis.llm.client import _error_message
+
+    assert expected in _error_message(httpx.Response(400, json=body))
+
+
+@pytest.mark.parametrize("body", [[], ["nope"], None, {"error": []}, {"error": 42}])
+def test_malformed_error_bodies_never_crash(body):
+    """A provider returning something unexpected must degrade, not take down the
+    request that was trying to report its failure."""
+    from jarvis.llm.client import _error_message, error_payload
+
+    assert isinstance(error_payload(httpx.Response(400, json=body)), dict)
+    assert isinstance(_error_message(httpx.Response(400, json=body)), str)
+
+
+def test_non_json_body_falls_back_to_text():
+    from jarvis.llm.client import _error_message
+
+    message = _error_message(httpx.Response(502, text="<html>gateway error</html>"))
+    assert "gateway" in message
+
+
+async def test_gemini_shaped_error_surfaces_through_the_pool():
+    """End to end: a list-wrapped error must reach the user as a sentence."""
+    client = GroqClient(settings(groq_model_ladder="model-a"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(
+                    400, json=[{"error": {"message": "API key not valid", "code": 400}}]
+                )
+            )
+            with pytest.raises(LLMError) as exc:
+                await client.complete([{"role": "user", "content": "hi"}])
+            assert "API key not valid" in str(exc.value)
+    finally:
+        await client.aclose()

@@ -213,3 +213,20 @@ def test_config_errors_are_not_reported_as_unreachable(error, expected):
     """Calling a retired model or a bad key 'unreachable' sends people debugging
     their network instead of their .env."""
     assert expected in verdict({"reachable": False, "error": error})
+
+
+async def test_one_broken_provider_does_not_discard_the_whole_run():
+    """A crash mid-run previously lost the results for every endpoint tested
+    before it — the expensive part of the exercise."""
+    from jarvis.benchmark import benchmark_endpoint
+
+    endpoint = Endpoint(model="weird", api_key="k", base_url=BASE)
+    with respx.mock:
+        respx.post(f"{BASE}/chat/completions").mock(
+            return_value=httpx.Response(400, json=[{"error": {"message": "list-shaped"}}])
+        )
+        async with httpx.AsyncClient() as client:
+            row = await benchmark_endpoint(client, endpoint)
+
+    assert row["reachable"] is False
+    assert "list-shaped" in row["error"]
