@@ -106,31 +106,114 @@ async function enterApp() {
   refreshIdentity().then(applyMode);
   $('voice-hint').textContent = tapHint();
   loadConversations();
-  requestLocation(true);
+  requestLocation();
   commandTimer = setInterval(pollCommands, 4000);
   pollCommands();
 }
 
+/* ---------------- toast ---------------- */
+
+function toast(message, ms = 7000) {
+  let box = $('toast');
+  if (!box) {
+    box = el('div', 'toast');
+    box.id = 'toast';
+    document.body.appendChild(box);
+  }
+  box.textContent = message;
+  box.classList.add('show');
+  clearTimeout(toast._timer);
+  toast._timer = setTimeout(() => box.classList.remove('show'), ms);
+}
+
 /* ---------------- location ---------------- */
 
-function requestLocation(quiet = false) {
+/* Location.
+ *
+ * iOS only shows the permission prompt in response to a user gesture. Asking on
+ * page load — as this used to — gets denied without ever prompting, and iOS then
+ * remembers that denial, so every later request fails instantly and the button
+ * appears dead forever. The fix is to never ask automatically: on startup we
+ * only *reuse* a permission already granted, and the actual prompt happens on
+ * the tap, which is a gesture iOS accepts.
+ */
+
+function setLocationState(state, title) {
+  const button = $('loc-btn');
+  button.classList.toggle('active', state === 'granted');
+  button.classList.toggle('pending', state === 'pending');
+  button.classList.toggle('denied', state === 'denied');
+  button.title = title || 'Share location';
+}
+
+async function locationPermission() {
+  // Permissions API isn't available on older iOS; "unknown" simply means we ask.
+  if (!navigator.permissions?.query) return 'unknown';
+  try {
+    return (await navigator.permissions.query({ name: 'geolocation' })).state;
+  } catch {
+    return 'unknown';
+  }
+}
+
+function getPosition(options) {
+  return new Promise((resolve, reject) =>
+    navigator.geolocation.getCurrentPosition(resolve, reject, options));
+}
+
+async function requestLocation({ userInitiated = false } = {}) {
   if (!navigator.geolocation) {
-    if (!quiet) alert('This browser has no location support.');
+    if (userInitiated) toast('This browser has no location support.');
     return;
   }
-  navigator.geolocation.getCurrentPosition(
-    async (pos) => {
-      location_ = {
-        lat: pos.coords.latitude,
-        lon: pos.coords.longitude,
-        accuracy_m: pos.coords.accuracy,
-      };
-      $('loc-btn').classList.add('active');
-      try { await api('/api/device/location', { method: 'POST', body: JSON.stringify(location_) }); } catch {}
-    },
-    (err) => { if (!quiet) alert(`Location unavailable: ${err.message}`); },
-    { enableHighAccuracy: true, timeout: 10000, maximumAge: 120000 }
-  );
+
+  // On startup, only proceed when permission is already granted. Asking here
+  // burns the one prompt iOS will show, without a gesture to justify it.
+  if (!userInitiated && (await locationPermission()) !== 'granted') {
+    setLocationState('idle', 'Tap to share location');
+    return;
+  }
+
+  setLocationState('pending', 'Getting location…');
+  try {
+    const position = await getPosition({
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 120000,
+    });
+    location_ = {
+      lat: position.coords.latitude,
+      lon: position.coords.longitude,
+      accuracy_m: position.coords.accuracy,
+    };
+    setLocationState('granted', `Location shared (±${Math.round(location_.accuracy_m)}m)`);
+    if (userInitiated) toast(`Location shared — accurate to about ${Math.round(location_.accuracy_m)}m.`);
+    try {
+      await api('/api/device/location', { method: 'POST', body: JSON.stringify(location_) });
+    } catch { /* the coordinates still work for this session */ }
+  } catch (err) {
+    setLocationState('denied', 'Location unavailable');
+    if (userInitiated) toast(locationErrorHelp(err));
+  }
+}
+
+function locationErrorHelp(err) {
+  // A raw "User denied Geolocation" is baffling when no prompt was ever shown,
+  // and it doesn't say where the switch is. On iOS the fix is two settings deep.
+  const onIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+  switch (err?.code) {
+    case 1:
+      return onIOS
+        ? 'Location is blocked. Settings → Privacy & Security → Location Services → '
+          + 'Safari Websites → While Using the App. Then reload and tap again.'
+        : 'Location is blocked. Allow it for this site in your browser settings, then tap again.';
+    case 2:
+      return 'Your device could not get a fix. Try again outdoors or near a window.';
+    case 3:
+      return 'Location timed out. Try again — the first fix can take a few seconds.';
+    default:
+      return `Location unavailable: ${err?.message || 'unknown error'}`;
+  }
 }
 
 /* ---------------- device commands ---------------- */
@@ -1022,7 +1105,7 @@ $('menu-btn').onclick = openDrawer;
 $('drawer-close').onclick = closeDrawer;
 $('scrim').onclick = closeDrawer;
 $('new-btn').onclick = newConversation;
-$('loc-btn').onclick = () => requestLocation(false);
+$('loc-btn').onclick = () => requestLocation({ userInitiated: true });
 $('logout-btn').onclick = signOut;
 $('status-btn').onclick = showStatus;
 $('auto-btn').onclick = showAutonomy;
