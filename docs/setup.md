@@ -186,6 +186,20 @@ quota. Heavy days may still hit a wall — it resets hourly.
 
 **Out of disk.** `docker system prune -a` reclaims old build layers.
 
+## Calling the API yourself
+
+Most endpoints need a bearer token. Rather than hunting for one:
+
+```bash
+cd ~/Jarvis
+bash scripts/token.sh                        # print a token
+bash scripts/token.sh /api/autonomy/health   # or just call an endpoint
+```
+
+It reads your access password from `.env`, logs in, and attaches the token —
+nothing to remember or paste. Asking for a token doesn't sign out your phone;
+each device holds its own.
+
 ## Starting over
 
 To wipe your credentials and data and begin again:
