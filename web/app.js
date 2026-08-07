@@ -959,6 +959,94 @@ async function showSkills() {
   }
 }
 
+/* ---------------- browser session ----------------
+ * Pasting the export straight into the app is the whole point of this screen.
+ * The alternative is getting a JSON blob onto the server first, which from a
+ * phone means an SSH client and a very long paste into a terminal. */
+
+async function showBrowserSession() {
+  closeDrawer();
+  showModal('Browser session', '<p class="muted">Checking…</p>');
+  let current = { present: false };
+  try {
+    current = await api('/api/browser/session');
+  } catch (err) {
+    $('modal-body').innerHTML = `<p class="error">${esc(err.message)}</p>`;
+    return;
+  }
+  renderBrowserSession(current);
+}
+
+function renderBrowserSession(state) {
+  const days = state.expires
+    ? Math.round((state.expires * 1000 - Date.now()) / 86400000)
+    : null;
+
+  const summary = state.present
+    ? `<div class="card">
+         <div class="row"><div class="r-main"><div class="r-title">Signed in to</div>
+           <div class="r-sub">${esc((state.domains || []).join(', '))}</div></div>
+           <div class="r-val up">${state.cookies} cookies</div></div>
+         ${days === null ? '' : `<div class="row"><div class="r-main">
+           <div class="r-title">Expires</div></div>
+           <div class="r-val ${days <= 0 ? 'down' : ''}">${
+             days <= 0 ? 'expired' : `in ${days} days`}</div></div>`}
+       </div>`
+    : '<p class="muted">No session stored. Subscriber-only articles will show '
+      + 'only a teaser until you import one.</p>';
+
+  $('modal-body').innerHTML = `
+    ${summary}
+    <div class="card">
+      <h4>Import a session</h4>
+      <p class="r-sub">On the device where you're signed in: open the site, use a
+      cookie-export extension, choose <b>Export as JSON</b>, then paste it here.
+      Your password is never involved.</p>
+      <textarea id="ck-text" rows="6" placeholder='Paste the JSON here — starts with [{"name":…'></textarea>
+      <button id="ck-import">Import</button>
+      ${state.present ? '<button id="ck-clear" class="hud-btn danger">Remove stored session</button>' : ''}
+      <p id="ck-result"></p>
+    </div>`;
+
+  $('ck-import').onclick = async () => {
+    const text = $('ck-text').value.trim();
+    const result = $('ck-result');
+    if (!text) { result.className = 'error'; result.textContent = 'Nothing pasted yet.'; return; }
+
+    result.className = 'muted';
+    result.textContent = 'Importing…';
+    try {
+      // Sent as form data rather than JSON: the export is itself JSON, and
+      // wrapping JSON in JSON is one escaping mistake away from a confusing
+      // parse error on a paste that was perfectly fine.
+      const body = new FormData();
+      body.append('cookies', text);
+      const res = await fetch(`${API}/api/browser/session`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${store.token}` },
+        body,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Import failed (${res.status})`);
+      renderBrowserSession(data);
+      $('ck-result').className = 'muted';
+      $('ck-result').textContent = `Imported ${data.cookies} cookies for ${
+        (data.domains || []).join(', ')}.`;
+    } catch (err) {
+      result.className = 'error';
+      result.textContent = err.message;
+    }
+  };
+
+  const clear = $('ck-clear');
+  if (clear) {
+    clear.onclick = async () => {
+      await api('/api/browser/session', { method: 'DELETE' });
+      renderBrowserSession({ present: false });
+    };
+  }
+}
+
 function renderSkills(skills) {
   const rows = skills.map((s) => `
     <div class="row">
@@ -1110,6 +1198,7 @@ $('logout-btn').onclick = signOut;
 $('status-btn').onclick = showStatus;
 $('auto-btn').onclick = showAutonomy;
 $('skills-btn').onclick = showSkills;
+$('cookies-btn').onclick = showBrowserSession;
 $('voice-btn').onclick = showVoicePicker;
 $('hud-btn').onclick = () => { closeDrawer(); setMode('voice'); };
 $('modal-close').onclick = () => $('modal').classList.add('hidden');

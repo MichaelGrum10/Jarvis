@@ -176,3 +176,66 @@ def test_merge_can_be_turned_off():
     br.save_session([cookie(name="other", domain="ft.com")], merge=False)
 
     assert br.session_summary()["domains"] == ["ft.com"]
+
+
+# ------------------------------------------------- pasting from the app
+
+@pytest.fixture
+def client():
+    from fastapi.testclient import TestClient
+
+    from jarvis.main import app
+
+    with TestClient(app) as c:
+        yield c
+
+
+@pytest.fixture
+def headers(client):
+    res = client.post("/api/auth/login", json={"password": "test-password", "label": "pytest"})
+    return {"Authorization": f"Bearer {res.json()['token']}"}
+
+
+def test_cookies_can_be_pasted_instead_of_uploaded(client, headers):
+    """The phone path: copy in Safari, paste into the app. Requiring a file
+    upload means getting a JSON blob onto the server first, which on iOS means
+    an SSH client and a very long paste into a terminal."""
+    export = json.dumps([{"name": "sess", "value": "v", "domain": ".wsj.com"}])
+
+    res = client.post("/api/browser/session", data={"cookies": export}, headers=headers)
+
+    assert res.status_code == 200, res.text
+    assert res.json()["domains"] == ["wsj.com"]
+
+
+def test_a_truncated_paste_says_so_rather_than_quoting_the_parser(client, headers):
+    """A cut-off paste is the common phone failure, and "Expecting ',' delimiter:
+    line 1 column 4051" does not suggest "paste it again"."""
+    res = client.post(
+        "/api/browser/session",
+        data={"cookies": '[{"name": "sess", "value": "v"'},
+        headers=headers,
+    )
+
+    assert res.status_code == 400
+    assert "cut off" in res.json()["detail"]
+
+
+def test_sending_neither_a_file_nor_text_is_rejected(client, headers):
+    assert client.post("/api/browser/session", headers=headers).status_code == 400
+
+
+def test_importing_a_session_needs_a_token(client):
+    """These cookies are live credentials for the sites they cover."""
+    assert client.post("/api/browser/session", data={"cookies": "[]"}).status_code == 401
+
+
+def test_the_endpoint_never_returns_a_cookie_value(client, headers):
+    export = json.dumps([
+        {"name": "sess", "value": "secret-value-do-not-leak", "domain": ".wsj.com"}
+    ])
+    client.post("/api/browser/session", data={"cookies": export}, headers=headers)
+
+    body = client.get("/api/browser/session", headers=headers).text
+
+    assert "secret-value-do-not-leak" not in body

@@ -62,9 +62,14 @@ scripted logins trip routinely, and a string of failed automated sign-ins is
 exactly the pattern that gets an account flagged. A session you created normally
 looks like what it is.
 
-This part is fiddly the first time and takes about five minutes. Do it on a
-laptop or desktop — phone browsers make extensions painful, and you only have to
-do this again when the session lapses.
+Takes about five minutes the first time, and again only when the session lapses.
+
+**From a phone**, skip the terminal entirely: export the cookies in Safari, then
+open Jarvis → ☰ → **🍪 Browser session** and paste them in. Steps 1-3 below still
+apply (the iOS extension is *Cookie Editor for Safari*, App Store, iOS 16+, paid);
+steps 4-5 become one paste.
+
+**From a laptop**, either route works — the app paste box or the terminal.
 
 ### Step 1 — Install the extension
 
