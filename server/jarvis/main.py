@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import auth, autonomy, bridge, chat, device, identity, voice
+from .api import auth, autonomy, bridge, chat, device, identity, skills, voice
 from .config import get_settings
 from .db import init_db
 from .llm.client import get_llm
@@ -30,6 +30,10 @@ async def lifespan(app: FastAPI):
     )
     await init_db()
     load_all_tools()
+
+    from .skills import ensure_builtins
+
+    await ensure_builtins()
 
     for feature in ("auth", "llm"):
         missing = settings.missing_for(feature)
@@ -60,6 +64,7 @@ app.include_router(bridge.router)
 app.include_router(autonomy.router)
 app.include_router(voice.router)
 app.include_router(identity.router)
+app.include_router(skills.router)
 
 
 @app.get("/api/health")

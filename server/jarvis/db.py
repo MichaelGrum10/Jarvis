@@ -166,6 +166,25 @@ class VoiceAlert(Base):
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
+class Skill(Base):
+    """A named routine: trigger phrases plus the instruction they invoke."""
+
+    __tablename__ = "skills"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    triggers: Mapped[str] = mapped_column(Text, default="")  # comma separated
+    instruction: Mapped[str] = mapped_column(Text)
+    enabled: Mapped[int] = mapped_column(Integer, default=1, index=True)
+    builtin: Mapped[int] = mapped_column(Integer, default=0)
+    uses: Mapped[int] = mapped_column(Integer, default=0)
+    last_used: Mapped[dt.datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=utcnow)
+
+    @property
+    def trigger_list(self) -> list[str]:
+        return [t.strip() for t in (self.triggers or "").split(",") if t.strip()]
+
+
 class AutonomyRun(Base):
     """One self-improvement / self-debug session."""
 

@@ -9,7 +9,7 @@
  */
 
 import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js';
-import { WakeListener, captureUtterance, JarvisVoice } from '/static/hud.js';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice } from '/static/hud.js';
 
 const API = '';
 const store = {
@@ -863,6 +863,140 @@ async function enrolVoice() {
   }
 }
 
+/* ---------------- skills ---------------- */
+
+async function showSkills() {
+  closeDrawer();
+  showModal('Skills', '<p class="muted">Loading…</p>');
+  try {
+    const { skills } = await api('/api/skills');
+    renderSkills(skills);
+  } catch (err) {
+    $('modal-body').innerHTML = `<p class="error">${esc(err.message)}</p>`;
+  }
+}
+
+function renderSkills(skills) {
+  const rows = skills.map((s) => `
+    <div class="row">
+      <div class="r-main">
+        <div class="r-title">${esc(s.name)} ${s.builtin ? '<span class="pill">built-in</span>' : ''}</div>
+        <div class="r-sub">${esc(s.triggers.join(', ') || 'no triggers')}</div>
+        <div class="r-sub">used ${s.uses}x</div>
+      </div>
+      <div class="r-val">
+        <button class="hud-btn" data-edit="${s.id}">edit</button>
+      </div>
+    </div>`).join('');
+
+  $('modal-body').innerHTML = `
+    <p class="muted">A skill is a standing instruction. Say one of its trigger
+    phrases and Jarvis follows that procedure instead of improvising.</p>
+    <div class="card">${rows || '<div class="r-sub">No skills yet.</div>'}</div>
+    <button id="skill-new">New skill</button>
+    <button id="skill-restore" class="hud-btn">Restore built-ins</button>
+    <div id="skill-edit"></div>`;
+
+  $('skill-new').onclick = () => editSkill(null);
+  $('skill-restore').onclick = async () => {
+    const { skills: fresh } = await api('/api/skills/restore-builtins', { method: 'POST' });
+    renderSkills(fresh);
+  };
+  document.querySelectorAll('[data-edit]').forEach((btn) => {
+    btn.onclick = () => editSkill(skills.find((s) => s.id === Number(btn.dataset.edit)));
+  });
+}
+
+function editSkill(skill) {
+  const box = $('skill-edit');
+  box.innerHTML = `
+    <div class="card">
+      <h4>${skill ? 'Edit' : 'New'} skill</h4>
+      <input id="sk-name" placeholder="Name" value="${esc(skill?.name || '')}">
+      <input id="sk-trig" placeholder="Trigger phrases, comma separated"
+             value="${esc(skill?.triggers?.join(', ') || '')}">
+      <textarea id="sk-inst" placeholder="What should Jarvis do? Be specific — this replaces guesswork.">${esc(skill?.instruction || '')}</textarea>
+      <button id="sk-save">Save</button>
+      ${skill ? '<button id="sk-del" class="hud-btn danger">Delete</button>' : ''}
+      <div id="sk-msg"></div>
+    </div>`;
+
+  $('sk-save').onclick = async () => {
+    const body = JSON.stringify({
+      name: $('sk-name').value.trim(),
+      triggers: $('sk-trig').value.trim(),
+      instruction: $('sk-inst').value.trim(),
+      enabled: true,
+    });
+    try {
+      await api(skill ? `/api/skills/${skill.id}` : '/api/skills',
+                { method: skill ? 'PUT' : 'POST', body });
+      showSkills();
+    } catch (err) {
+      $('sk-msg').innerHTML = `<p class="error">${esc(err.message)}</p>`;
+    }
+  };
+  if (skill) {
+    $('sk-del').onclick = async () => {
+      await api(`/api/skills/${skill.id}`, { method: 'DELETE' });
+      showSkills();
+    };
+  }
+}
+
+/* ---------------- voice picker ---------------- */
+
+function showVoicePicker() {
+  closeDrawer();
+  const voices = ('speechSynthesis' in window) ? window.speechSynthesis.getVoices() : [];
+  if (!voices.length) {
+    showModal('Voice', '<p class="muted">No voices available in this browser yet. '
+      + 'Close this, wait a moment, and try again — some browsers load them late.</p>');
+    return;
+  }
+
+  const saved = localStorage.getItem('jarvis_voice') || '';
+  const best = pickJarvisVoice(voices);
+  // English first: the rest are rarely what anyone wants, but keep them
+  // reachable rather than deciding for the user.
+  const sorted = [...voices].sort((a, b) =>
+    (b.lang.startsWith('en') - a.lang.startsWith('en')) || a.name.localeCompare(b.name));
+
+  const options = sorted.map((v) => `
+    <div class="row">
+      <div class="r-main">
+        <div class="r-title">${esc(v.name)} ${v.name === best?.name ? '<span class="pill">closest to JARVIS</span>' : ''}</div>
+        <div class="r-sub">${esc(v.lang)}</div>
+      </div>
+      <div class="r-val">
+        <button class="hud-btn" data-try="${esc(v.name)}">try</button>
+        <button class="hud-btn" data-use="${esc(v.name)}">${saved === v.name ? '✓ using' : 'use'}</button>
+      </div>
+    </div>`).join('');
+
+  showModal('Voice', `
+    <p class="muted">JARVIS is British, male and unhurried. On Apple devices
+    <strong>Daniel</strong> is the closest match. This is not the voice from the
+    films — nothing free is — but a premium British voice installed via
+    Settings → Accessibility → Spoken Content gets noticeably closer.</p>
+    <div class="card">${options}</div>`);
+
+  document.querySelectorAll('[data-try]').forEach((b) => {
+    b.onclick = () => {
+      const v = voices.find((x) => x.name === b.dataset.try);
+      jarvis.voice = v;
+      jarvis.speak('Good evening, sir. All systems are functioning within normal parameters.');
+    };
+  });
+  document.querySelectorAll('[data-use]').forEach((b) => {
+    b.onclick = () => {
+      localStorage.setItem('jarvis_voice', b.dataset.use);
+      jarvis.voice = voices.find((x) => x.name === b.dataset.use);
+      showVoicePicker();
+    };
+  });
+}
+
 /* ---------------- drawer ---------------- */
 
 const openDrawer = () => { $('drawer').classList.add('open'); $('scrim').classList.add('on'); };
@@ -892,6 +1026,9 @@ $('loc-btn').onclick = () => requestLocation(false);
 $('logout-btn').onclick = signOut;
 $('status-btn').onclick = showStatus;
 $('auto-btn').onclick = showAutonomy;
+$('skills-btn').onclick = showSkills;
+$('voice-btn').onclick = showVoicePicker;
+$('hud-btn').onclick = () => { closeDrawer(); setMode('voice'); };
 $('modal-close').onclick = () => $('modal').classList.add('hidden');
 $('modal').onclick = (e) => { if (e.target === $('modal')) $('modal').classList.add('hidden'); };
 

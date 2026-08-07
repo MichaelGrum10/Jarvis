@@ -237,6 +237,16 @@ OPENROUTER_API_KEY=sk-or-...  # openrouter.ai/keys
 Full detail, including how to pick a better model and why stacking accounts at
 one provider is a bad idea, in [docs/model-capacity.md](docs/model-capacity.md).
 
+## Skills
+
+A skill is a standing instruction with trigger phrases. Say one and Jarvis
+follows that procedure instead of improvising a different answer each time.
+
+Four ship built in — **morning brief**, **end of day**, **book appointment**,
+**market check** — and you can write your own from the drawer (**✦ Skills**).
+The instruction is plain English, so "check the calendar, then the inbox, lead
+with anything time-critical, under 150 words" is a complete skill.
+
 ## Self-improvement
 
 The AutoGPT-style part. Open the drawer → **Self-improve**, describe a goal, and

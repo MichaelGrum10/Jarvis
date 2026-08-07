@@ -15,9 +15,11 @@ from typing import Any
 
 from ..config import Settings, get_settings
 from ..llm.client import LLMError, get_llm
+from ..skills import match_skill, skill_preamble
 from ..tools.base import ToolContext, ToolResult, registry
 from ..tools.memory_tool import memory_preamble
 from .prompts import build_system_prompt
+from .toolpicker import describe_selection, select_tools
 
 log = logging.getLogger(__name__)
 
@@ -87,6 +89,16 @@ class Agent:
             log.exception("Could not load memory")
             memory_block = ""
 
+        # A matching skill supplies a standing procedure for this kind of request,
+        # so recurring jobs are done the same way every time instead of being
+        # re-improvised.
+        try:
+            skill = await match_skill(user_message)
+        except Exception:
+            log.exception("Skill matching failed")
+            skill = None
+        extra_system = (extra_system + skill_preamble(skill)).strip()
+
         messages: list[dict] = [
             {
                 "role": "system",
@@ -96,7 +108,13 @@ class Agent:
         messages.extend(history or [])
         messages.append({"role": "user", "content": user_message})
 
-        tool_schemas = registry.schemas(self.settings, ctx)
+        # Only offer tools relevant to this turn. Sending all ~29 costs ~4k
+        # tokens before the user has spoken, and a model choosing among 29
+        # options picks wrong more often than one choosing among seven.
+        available = registry.available(self.settings, ctx)
+        selected = select_tools(user_message, available)
+        log.info("%s", describe_selection(user_message, available, selected))
+        tool_schemas = [t.schema() for t in selected]
 
         for step in range(1, MAX_STEPS + 1):
             try:

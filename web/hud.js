@@ -259,7 +259,13 @@ export class JarvisVoice {
     this.enabled = true;
     this.speaking = false;
     if ('speechSynthesis' in window) {
-      const load = () => { this.voice = pickJarvisVoice(window.speechSynthesis.getVoices()); };
+      const load = () => {
+        const voices = window.speechSynthesis.getVoices();
+        // An explicit choice always wins over the heuristic — the heuristic is a
+        // starting point, not a correction to be reapplied.
+        const chosen = localStorage.getItem('jarvis_voice');
+        this.voice = (chosen && voices.find((v) => v.name === chosen)) || pickJarvisVoice(voices);
+      };
       load();
       window.speechSynthesis.onvoiceschanged = load;
     }

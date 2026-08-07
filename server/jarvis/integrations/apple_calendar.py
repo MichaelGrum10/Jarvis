@@ -203,8 +203,15 @@ class AppleCalendar:
         event = IEvent()
         event.add("uid", uid)
         event.add("dtstamp", dt.datetime.now(dt.UTC))
-        event.add("dtstart", start)
-        event.add("dtend", end)
+        # Written in UTC rather than with a TZID. A zoneinfo-aware datetime makes
+        # icalendar emit `DTSTART;TZID=America/New_York:...`, but it does not also
+        # emit the matching VTIMEZONE component — and RFC 5545 requires that any
+        # referenced TZID be defined in the same VCALENDAR. iCloud enforces this
+        # and rejects the event outright, which is why creation failed while
+        # reading worked fine. UTC needs no VTIMEZONE and is unambiguous; Apple's
+        # clients render it in local time regardless.
+        event.add("dtstart", start.astimezone(dt.UTC))
+        event.add("dtend", end.astimezone(dt.UTC))
         event.add("summary", summary)
         if location:
             event.add("location", location)
@@ -220,7 +227,38 @@ class AppleCalendar:
             event.add_component(alarm)
         ical.add_component(event)
 
-        cal.save_event(ical.to_ical().decode())
+        payload = ical.to_ical().decode()
+        try:
+            cal.save_event(payload)
+        except Exception as exc:
+            # iCloud accounts usually carry calendars that accept VEVENT but
+            # refuse writes — Birthdays, Siri Suggestions, subscribed holiday
+            # feeds. If the caller didn't name one and the default turned out to
+            # be read-only, try the others before giving up.
+            if calendar:
+                raise CalendarError(
+                    f"Could not write to calendar '{self._name_of(cal)}': {exc}"
+                ) from exc
+
+            tried = [self._name_of(cal)]
+            for alternative in self._calendars():
+                name = self._name_of(alternative)
+                if name in tried:
+                    continue
+                try:
+                    alternative.save_event(payload)
+                    cal = alternative
+                    break
+                except Exception:
+                    tried.append(name)
+            else:
+                raise CalendarError(
+                    "None of your calendars accepted a new event "
+                    f"({', '.join(tried)}). They may all be read-only or shared "
+                    "to you rather than owned by this account. Set "
+                    "DEFAULT_CALENDAR in .env to one you own."
+                ) from exc
+
         return CalEvent(
             uid=uid,
             summary=summary,

@@ -41,13 +41,27 @@ class ToolResult:
     # Shown to the user as a card alongside the reply; the model only sees `data`.
     display: dict | None = None
 
+    # Tool output goes straight into the next request, so this cap is a per-turn
+    # token budget, not just a sanity limit. 12000 chars is ~3000 tokens — two
+    # parallel tools would spend more of the context on raw JSON than on the
+    # conversation. 4000 is enough for any result a person would actually read.
+    MAX_MODEL_CHARS = 4000
+
     def for_model(self) -> str:
         if not self.ok:
             return json.dumps({"error": self.error or "tool failed"})
         try:
-            return json.dumps(self.data, default=str)[:12000]
+            rendered = json.dumps(self.data, default=str)
         except (TypeError, ValueError):
-            return str(self.data)[:12000]
+            rendered = str(self.data)
+        if len(rendered) <= self.MAX_MODEL_CHARS:
+            return rendered
+        # Say it was cut, so the model reports "showing the first N" rather than
+        # treating a truncated list as the whole truth.
+        return (
+            rendered[: self.MAX_MODEL_CHARS]
+            + f'… [truncated at {self.MAX_MODEL_CHARS} chars — ask for more detail if needed]'
+        )
 
     @classmethod
     def fail(cls, message: str) -> ToolResult:
