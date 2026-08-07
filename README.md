@@ -16,7 +16,7 @@ anywhere in the stack.
 |---|---|---|
 | Conversation + reasoning | Groq + optional Cerebras/OpenRouter/Together, with failover | free tier |
 | **Email** — triage, expand, search, send | iCloud IMAP/SMTP, app-specific password | free |
-| **Calendar** — read, book, delete, find free slots | iCloud CalDAV | free |
+| **Calendar** — read, book, move, delete, find free slots | iCloud CalDAV | free |
 | **Messages** — read iMessage/SMS, send | Mac bridge reading `chat.db` | free, needs a Mac |
 | **Stocks** — quotes, history, ticker news | yfinance | free, no key |
 | **WSJ headlines** | WSJ public RSS feeds | free |
@@ -28,7 +28,7 @@ anywhere in the stack.
 | **Memory** | SQLite, injected into every prompt | free |
 | **Self-improvement** | Sandboxed agent that edits its own code and runs tests | free |
 
-29 tools, all registered through one plugin-style registry — adding a capability
+30 tools, all registered through one plugin-style registry — adding a capability
 means dropping a file in `server/jarvis/tools/`.
 
 ---
@@ -245,7 +245,7 @@ in [docs/voice-identity.md](docs/voice-identity.md); the basics are in
 
 ## Running out of capacity
 
-Free tiers meter tokens per minute, and one turn here carries ~29 tool schemas —
+Free tiers meter tokens per minute, and one turn here carries ~30 tool schemas —
 so a busy minute can stop everything. The client keeps a pool of endpoints
 (provider × key × model) and fails over rather than retrying a busy one.
 
@@ -348,7 +348,7 @@ server/jarvis/
     loop.py        the tool-calling loop, SSE events
     prompts.py     system prompt
     autonomy.py    self-improvement engine + sandbox
-  tools/           29 tools, one file per domain
+  tools/           30 tools, one file per domain
   api/voice.py     Whisper transcription endpoint
   integrations/    iCloud CalDAV + IMAP
   api/             auth, chat, device, bridge, autonomy routes

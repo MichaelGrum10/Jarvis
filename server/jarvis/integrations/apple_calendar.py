@@ -270,6 +270,96 @@ class AppleCalendar:
             calendar=self._name_of(cal),
         )
 
+    async def update_event(
+        self,
+        uid: str,
+        *,
+        summary: str | None = None,
+        start: dt.datetime | None = None,
+        end: dt.datetime | None = None,
+        location: str | None = None,
+        description: str | None = None,
+        calendar: str = "",
+    ) -> CalEvent:
+        return await asyncio.to_thread(
+            self._update_event, uid, summary, start, end, location, description, calendar
+        )
+
+    def _update_event(
+        self, uid, summary, start, end, location, description, calendar
+    ) -> CalEvent:
+        """Edit an existing event in place, leaving unnamed fields alone.
+
+        Editing rather than delete-and-recreate keeps the uid stable, so
+        invitees, alarms and the user's own phone see a changed event instead of
+        a cancellation followed by an unfamiliar new one.
+        """
+        found = self._locate(uid, calendar)
+        if found is None:
+            raise CalendarError(f"No event with uid {uid} found.")
+        cal, stored = found
+
+        component = self._vevent_of(stored)
+        if component is None:
+            raise CalendarError(f"Event {uid} has no VEVENT to edit.")
+
+        tz = ZoneInfo(self.settings.timezone)
+        if summary is not None:
+            component["summary"] = summary
+        for field_name, value in (("dtstart", start), ("dtend", end)):
+            if value is None:
+                continue
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=tz)
+            # UTC for the same reason as creation: a TZID with no matching
+            # VTIMEZONE is invalid iCalendar and iCloud rejects the whole event.
+            component.pop(field_name.upper(), None)
+            component.add(field_name, value.astimezone(dt.UTC))
+        if location is not None:
+            component["location"] = location
+        if description is not None:
+            component["description"] = description
+
+        # Bumping the sequence is what tells clients this is a revision rather
+        # than a conflicting copy of the same event.
+        component["sequence"] = int(component.get("sequence", 0)) + 1
+        component.pop("DTSTAMP", None)
+        component.add("dtstamp", dt.datetime.now(dt.UTC))
+
+        try:
+            stored.save()
+        except Exception as exc:
+            raise CalendarError(f"Could not save changes to '{uid}': {exc}") from exc
+
+        return CalEvent(
+            uid=uid,
+            summary=str(component.get("SUMMARY", "")),
+            start=self._iso(component.get("DTSTART").dt),
+            end=self._iso(component.get("DTEND").dt) if component.get("DTEND") else "",
+            all_day=False,
+            location=str(component.get("LOCATION", "")),
+            description=str(component.get("DESCRIPTION", "")),
+            calendar=self._name_of(cal),
+        )
+
+    def _locate(self, uid: str, calendar: str = ""):
+        """Find (calendar, stored event) for a uid, searching every calendar."""
+        cals = [self._pick(calendar)] if calendar else self._calendars()
+        for cal in cals:
+            try:
+                event = cal.event_by_uid(uid)
+            except Exception:
+                continue
+            if event is not None:
+                return cal, event
+        return None
+
+    @staticmethod
+    def _vevent_of(stored):
+        for component in stored.icalendar_instance.walk("VEVENT"):
+            return component
+        return None
+
     async def delete_event(self, uid: str, calendar: str = "") -> bool:
         return await asyncio.to_thread(self._delete_event, uid, calendar)
 

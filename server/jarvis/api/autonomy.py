@@ -87,16 +87,21 @@ async def improvement_health(device: CurrentDevice, days: int = 7):
     Worth reading even with self-improvement off — it is the clearest picture of
     where the assistant is failing you.
     """
-    from ..agent.selfimprove import get_improver
+    from ..agent.selfimprove import blockers, get_improver
     from ..telemetry import top_issues
 
     settings = get_settings()
     issues = await top_issues(days=days, limit=10)
     picked = await get_improver().pick_goal()
+    stopped_by = blockers(settings)
 
     return {
         "mode": settings.improve_mode,
         "interval_hours": settings.improve_interval_hours,
+        # Empty means it will actually run. Non-empty is the whole answer to
+        # "why is this still disabled" — each entry carries its own fix.
+        "ready": not stopped_by,
+        "blockers": stopped_by,
         "issues": issues,
         "next_goal": picked[1].splitlines()[0] if picked else None,
         "note": (

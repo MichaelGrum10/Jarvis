@@ -17,6 +17,7 @@ from ..config import Settings, get_settings
 from ..llm.client import LLMError, get_llm
 from ..skills import match_skill, skill_preamble
 from ..telemetry import record_failure, record_if_refusal
+from ..tools import recent_events
 from ..tools.base import ToolContext, ToolResult, registry
 from ..tools.memory_tool import memory_preamble
 from .prompts import build_system_prompt
@@ -100,6 +101,11 @@ class Agent:
             skill = None
         extra_system = (extra_system + skill_preamble(skill)).strip()
 
+        # Tool results don't survive into the next turn (see history_from_rows),
+        # so an event created a moment ago would otherwise have no uid to refer
+        # back to when the user says "actually, move it".
+        extra_system = (extra_system + recent_events.preamble(ctx.conversation_id)).strip()
+
         messages: list[dict] = [
             {
                 "role": "system",
@@ -109,8 +115,8 @@ class Agent:
         messages.extend(history or [])
         messages.append({"role": "user", "content": user_message})
 
-        # Only offer tools relevant to this turn. Sending all ~29 costs ~4k
-        # tokens before the user has spoken, and a model choosing among 29
+        # Only offer tools relevant to this turn. Sending all ~30 costs ~4k
+        # tokens before the user has spoken, and a model choosing among 30
         # options picks wrong more often than one choosing among seven.
         available = registry.available(self.settings, ctx)
         selected = select_tools(user_message, available)
@@ -222,7 +228,7 @@ def history_from_rows(rows: list[Any]) -> list[dict]:
     Replaying full tool-call transcripts would blow the context window and confuse
     the model with stale results; the user/assistant text is what carries forward.
 
-    Kept short deliberately: this plus ~29 tool schemas plus the system prompt
+    Kept short deliberately: this plus ~30 tool schemas plus the system prompt
     easily exceeds Groq's free-tier per-minute token budget on longer threads,
     especially on the smaller fallback model. Durable facts belong in memory_save,
     not in how much raw history rides along on every single turn.

@@ -2,7 +2,7 @@
 
 ## The problem, precisely
 
-Every turn sends a system prompt plus ~29 tool schemas before you've said
+Every turn sends a system prompt plus ~30 tool schemas before you've said
 anything — roughly 8–11k tokens. Free tiers meter *tokens per minute*, so two or
 three questions in a row can exhaust a minute's budget and everything stops.
 
@@ -110,7 +110,7 @@ this assistant actually sends, and reports three things:
 |---|---|
 | **latency** | how long a turn takes |
 | **tool calling** | can it pick a tool and format the call correctly |
-| **at full size** | does it survive a ~29-schema turn, where token caps bite |
+| **at full size** | does it survive a ~30-schema turn, where token caps bite |
 
 Tool calling is weighted above speed on purpose. This assistant is tool calls
 almost end to end, so a fast model that fumbles them is unusable — that is
@@ -205,7 +205,7 @@ GROQ_MODEL_LADDER=openai/gpt-oss-120b,llama-3.3-70b-versatile,moonshotai/kimi-k2
 
 Two things actually matter for this assistant:
 
-**Tool calling has to be reliable.** 29 schemas per turn is demanding, and a
+**Tool calling has to be reliable.** 30 schemas per turn is demanding, and a
 model that fumbles them produces the `not in request.tools` error. Large
 instruction-tuned models handle it; small "instant" variants often don't.
 

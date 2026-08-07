@@ -169,3 +169,43 @@ def test_issue_description_carries_enough_to_act_on():
     assert "14 times" in described
     assert "calendar_create" in described
     assert "book me a haircut" in described
+
+
+def test_every_missing_precondition_is_reported_not_just_the_first():
+    """Setting IMPROVE_MODE alone leaves the loop running and failing every
+    cycle. Reporting one blocker at a time turns that into three rounds of
+    'still disabled'."""
+    from jarvis.agent.selfimprove import blockers
+    from jarvis.config import Settings
+
+    found = blockers(Settings())
+    what = " ".join(b["what"] for b in found)
+
+    assert "IMPROVE_MODE" in what
+    assert "AUTONOMY_ENABLED" in what
+    assert all(b["fix"] for b in found), "a blocker with no fix is just a complaint"
+
+
+def test_no_blockers_once_everything_is_set(tmp_path):
+    from jarvis.agent.selfimprove import blockers
+    from jarvis.config import Settings
+
+    (tmp_path / ".git").mkdir()
+    settings = Settings(
+        improve_mode="propose", autonomy_enabled=True, autonomy_repo_path=tmp_path
+    )
+
+    assert blockers(settings) == []
+
+
+def test_a_checkout_without_git_is_a_blocker(tmp_path):
+    """Without a repo there's no branch to isolate changes on, so the engine
+    refuses — silently, from the user's point of view."""
+    from jarvis.agent.selfimprove import blockers
+    from jarvis.config import Settings
+
+    settings = Settings(
+        improve_mode="propose", autonomy_enabled=True, autonomy_repo_path=tmp_path
+    )
+
+    assert any("git" in b["what"] for b in blockers(settings))

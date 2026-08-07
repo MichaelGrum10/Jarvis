@@ -1,8 +1,8 @@
 """Choosing which tools to offer the model for a given turn.
 
-Sending all ~29 schemas every turn costs about 3,700 tokens before the user has
+Sending all ~30 schemas every turn costs about 3,700 tokens before the user has
 said a word, and on a free tier metered per minute that is most of the budget.
-It also makes answers worse: a model choosing between 29 options picks wrong more
+It also makes answers worse: a model choosing between 30 options picks wrong more
 often than one choosing between six.
 
 So tools are grouped into domains and only relevant domains are offered. Matching
@@ -26,6 +26,12 @@ DOMAIN_HINTS: dict[str, tuple[str, ...]] = {
         "wednesday", "thursday", "friday", "saturday", "sunday", "diary", "agenda",
         "reschedule", "cancel", "when am i", "what's on", "whats on", "haircut",
         "dentist", "doctor", "lunch", "dinner", "flight", "remind",
+        # Amendments to something already booked. These rarely name the calendar
+        # at all — "make it 4 instead" is a calendar write with no calendar word
+        # in it — and without the tools in scope the model can only apologise.
+        "move it", "move the", "change it", "change the", "make it", "push it",
+        "push the", "instead", "delete it", "remove it", "call it off",
+        "earlier", "later", "shift it",
     ),
     "mail": (
         "mail", "email", "inbox", "message from", "unread", "sender", "reply",

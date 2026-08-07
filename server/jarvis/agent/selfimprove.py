@@ -48,6 +48,47 @@ log = logging.getLogger(__name__)
 MIN_OCCURRENCES = 3
 
 
+def blockers(settings: Settings | None = None) -> list[dict]:
+    """Everything still standing between the current config and a working cycle.
+
+    Turning this on takes three separate changes, and setting only the obvious
+    one leaves the loop running and failing every cycle in a log nobody reads.
+    Each entry names the fix, so "it's still disabled" has an answer instead of
+    a guess.
+    """
+    settings = settings or get_settings()
+    from pathlib import Path
+
+    found: list[dict] = []
+
+    if settings.improve_mode == "off":
+        found.append({
+            "what": "IMPROVE_MODE is off",
+            "fix": "bash scripts/setkey.sh IMPROVE_MODE propose",
+        })
+    elif settings.improve_mode not in ("propose", "apply"):
+        found.append({
+            "what": f"IMPROVE_MODE is {settings.improve_mode!r}, which isn't a mode",
+            "fix": "bash scripts/setkey.sh IMPROVE_MODE propose",
+        })
+
+    if not settings.autonomy_enabled:
+        found.append({
+            "what": "AUTONOMY_ENABLED is false, so every cycle refuses to edit code",
+            "fix": "bash scripts/setkey.sh AUTONOMY_ENABLED true",
+        })
+
+    root = Path(settings.autonomy_repo_path)
+    if not (root / ".git").exists():
+        found.append({
+            "what": f"{root} has no git repository, so changes can't be branched or undone",
+            "fix": "Uncomment the './:/app/repo' volume in docker-compose.yml, "
+                   "then: docker compose up -d",
+        })
+
+    return found
+
+
 class SelfImprover:
     def __init__(self, settings: Settings | None = None) -> None:
         self.settings = settings or get_settings()
@@ -62,6 +103,13 @@ class SelfImprover:
             return
         if self._task and not self._task.done():
             return
+
+        # Started anyway when something else is missing — the loop reports the
+        # blockers through /api/autonomy/health, and refusing to start would
+        # make that endpoint go quiet exactly when it has something to say.
+        for blocker in blockers(self.settings):
+            log.warning("Self-improvement blocked: %s — %s", blocker["what"], blocker["fix"])
+
         self._running = True
         self._task = asyncio.create_task(self._loop())
         log.info(

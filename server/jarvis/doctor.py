@@ -430,6 +430,16 @@ def check_config(report: Report) -> None:
             "IMPROVE_MODE must be one of: off, propose, apply",
         )
 
+    # Setting the mode is only one of three things this needs. With the others
+    # missing the loop still starts and still fails every cycle, in a log nobody
+    # is watching — so report every blocker, not just the first.
+    from .agent.selfimprove import blockers
+
+    for blocker in blockers(settings):
+        if "IMPROVE_MODE" in blocker["fix"]:
+            continue  # already reported just above
+        report.bad(f"  {blocker['what']}", "self-improvement can't run", blocker["fix"])
+
 
 async def check_voice(report: Report) -> None:
     header("Voice identity")

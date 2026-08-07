@@ -6,8 +6,39 @@ import datetime as dt
 
 from ..config import get_settings
 from ..integrations.apple_calendar import get_calendar
-from ..utils.timeparse import parse_when
+from ..utils.meridiem import clarification_question, resolve_meridiem
+from ..utils.timeparse import local_now, meridiem_is_ambiguous, parse_when
+from . import recent_events
 from .base import ToolContext, ToolResult, registry
+
+# A booking a minute or two old is a clock difference, not a request to write
+# into the past. Anything older was meant differently.
+PAST_GRACE = dt.timedelta(minutes=2)
+
+
+def _apply_meridiem(start_text: str, start_dt: dt.datetime, title: str):
+    """Fix a bare hour to morning or afternoon, or report that it can't be.
+
+    Returns (datetime, note, question). Exactly one of `note` and `question` is
+    ever set: a note when the reading was inferred and should be stated back, a
+    question when it has to be asked instead.
+    """
+    hour = meridiem_is_ambiguous(start_text)
+    if hour is None:
+        return start_dt, "", ""
+
+    resolved, reason = resolve_meridiem(hour, title)
+    if resolved is None:
+        return start_dt, "", clarification_question(hour, title)
+
+    if start_dt.hour == resolved:
+        return start_dt, "", ""
+    return (
+        start_dt.replace(hour=resolved),
+        f"Read '{start_text.strip()}' as {resolved % 12 or 12} "
+        f"{'PM' if resolved >= 12 else 'AM'} — {reason}. Say so when confirming.",
+        "",
+    )
 
 
 @registry.tool(
@@ -44,6 +75,11 @@ async def calendar_list(start: str, end: str = "", calendar: str = "", ctx: Tool
 
     events = await get_calendar().events_between(start_dt, end_dt, calendar)
     payload = [e.to_dict() for e in events]
+    # Only when the range picked out a handful. Remembering a whole week would
+    # make "it" ambiguous rather than resolvable, which is the opposite of the point.
+    if len(payload) <= 3:
+        for item in payload:
+            recent_events.remember(ctx.conversation_id if ctx else None, item, "read")
     return ToolResult.success(
         {
             "range": {"start": start_dt.isoformat(), "end": end_dt.isoformat()},
@@ -78,6 +114,14 @@ async def calendar_list(start: str, end: str = "", calendar: str = "", ctx: Tool
                 "type": "integer",
                 "description": "Alert this many minutes before. Omit for no alert.",
             },
+            "allow_past": {
+                "type": "boolean",
+                "description": (
+                    "Set true ONLY when the user has confirmed they want an event in the "
+                    "past, e.g. logging something that already happened. Never set it to "
+                    "get past a rejection without asking them first."
+                ),
+            },
         },
         "required": ["title", "start"],
     },
@@ -93,10 +137,30 @@ async def calendar_create(
     notes: str = "",
     calendar: str = "",
     reminder_minutes: int | None = None,
+    allow_past: bool = False,
     ctx: ToolContext = None,
 ):
     tz = ctx.timezone if ctx else get_settings().timezone
     start_dt = parse_when(start, tz)
+
+    start_dt, note, question = _apply_meridiem(start, start_dt, title)
+    if question:
+        # Refused rather than guessed. The model sees why, asks, and calls again
+        # with an unambiguous time — one extra exchange instead of an
+        # appointment silently twelve hours out.
+        return ToolResult.fail(
+            f"Ambiguous time: '{start.strip()}' could be AM or PM. Ask the user: {question} "
+            "Then call calendar_create again with an explicit time."
+        )
+
+    if not allow_past and start_dt < local_now(tz) - PAST_GRACE:
+        return ToolResult.fail(
+            f"That start time ({start_dt.strftime('%a %d %b, %-I:%M %p')}) is in the past. "
+            "The user probably meant a later date — check which one they want. "
+            "If they genuinely want to record something that already happened, "
+            "call again with allow_past=true."
+        )
+
     end_dt = parse_when(end, tz) if end else start_dt + dt.timedelta(minutes=max(duration_minutes, 5))
     if end_dt <= start_dt:
         end_dt = start_dt + dt.timedelta(minutes=max(duration_minutes, 5))
@@ -110,17 +174,113 @@ async def calendar_create(
         calendar=calendar,
         alarm_minutes=reminder_minutes,
     )
+    recent_events.remember(ctx.conversation_id if ctx else None, event.to_dict(), "created")
+    payload: dict = {"created": event.to_dict()}
+    if note:
+        payload["interpretation"] = note
     return ToolResult.success(
-        {"created": event.to_dict()},
+        payload,
         display={"type": "calendar_created", "event": event.to_dict()},
+    )
+
+
+@registry.tool(
+    name="calendar_update",
+    description=(
+        "Change an existing calendar event — move it, rename it, change where it is. Use "
+        "this whenever the user amends something already booked ('make it 4 instead', "
+        "'move the dentist to Friday'). Only the fields you pass are changed. If the event "
+        "was created earlier in this conversation its uid is in your system prompt; "
+        "otherwise call calendar_list to find it. Prefer this over deleting and recreating, "
+        "which loses invitees and alerts."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "uid": {"type": "string", "description": "Event uid."},
+            "title": {"type": "string", "description": "New title. Omit to keep."},
+            "start": {"type": "string", "description": "New start time. Omit to keep."},
+            "duration_minutes": {
+                "type": "integer",
+                "description": "New length in minutes, applied from the start time.",
+            },
+            "end": {"type": "string", "description": "New end time; overrides duration."},
+            "location": {"type": "string", "description": "New location. Omit to keep."},
+            "notes": {"type": "string", "description": "New notes. Omit to keep."},
+            "calendar": {"type": "string", "description": "Calendar the event lives on."},
+            "allow_past": {
+                "type": "boolean",
+                "description": "Only with the user's confirmation, as for calendar_create.",
+            },
+        },
+        "required": ["uid"],
+    },
+    requires="calendar",
+    tags=["calendar", "write"],
+)
+async def calendar_update(
+    uid: str,
+    title: str = "",
+    start: str = "",
+    duration_minutes: int | None = None,
+    end: str = "",
+    location: str = "",
+    notes: str = "",
+    calendar: str = "",
+    allow_past: bool = False,
+    ctx: ToolContext = None,
+):
+    tz = ctx.timezone if ctx else get_settings().timezone
+    start_dt = end_dt = None
+    note = ""
+
+    if start:
+        start_dt = parse_when(start, tz)
+        start_dt, note, question = _apply_meridiem(start, start_dt, title)
+        if question:
+            return ToolResult.fail(
+                f"Ambiguous time: '{start.strip()}' could be AM or PM. Ask the user: {question} "
+                "Then call calendar_update again with an explicit time."
+            )
+        if not allow_past and start_dt < local_now(tz) - PAST_GRACE:
+            return ToolResult.fail(
+                f"That start time ({start_dt.strftime('%a %d %b, %-I:%M %p')}) is in the past. "
+                "Check which date they meant, or call again with allow_past=true if they "
+                "confirmed they want it there."
+            )
+
+    if end:
+        end_dt = parse_when(end, tz)
+    elif duration_minutes and start_dt:
+        end_dt = start_dt + dt.timedelta(minutes=max(duration_minutes, 5))
+    if start_dt and end_dt and end_dt <= start_dt:
+        end_dt = start_dt + dt.timedelta(minutes=max(duration_minutes or 60, 5))
+
+    event = await get_calendar().update_event(
+        uid,
+        summary=title or None,
+        start=start_dt,
+        end=end_dt,
+        location=location or None,
+        description=notes or None,
+        calendar=calendar,
+    )
+    recent_events.remember(ctx.conversation_id if ctx else None, event.to_dict(), "updated")
+    payload: dict = {"updated": event.to_dict()}
+    if note:
+        payload["interpretation"] = note
+    return ToolResult.success(
+        payload, display={"type": "calendar_created", "event": event.to_dict()}
     )
 
 
 @registry.tool(
     name="calendar_delete",
     description=(
-        "Delete an event from the Apple Calendar by its uid. Call calendar_list first to "
-        "get the uid, and confirm with the user which event they mean if more than one matches."
+        "Delete an event from the Apple Calendar by its uid. If the event was created "
+        "earlier in this conversation its uid is in your system prompt; otherwise call "
+        "calendar_list first, and confirm which event they mean if more than one matches. "
+        "To change an event rather than cancel it, use calendar_update instead."
     ),
     parameters={
         "type": "object",
@@ -134,8 +294,9 @@ async def calendar_create(
     confirm=True,
     tags=["calendar", "write", "destructive"],
 )
-async def calendar_delete(uid: str, calendar: str = ""):
+async def calendar_delete(uid: str, calendar: str = "", ctx: ToolContext = None):
     await get_calendar().delete_event(uid, calendar)
+    recent_events.forget(ctx.conversation_id if ctx else None, uid)
     return ToolResult.success({"deleted": uid})
 
 
