@@ -62,54 +62,110 @@ scripted logins trip routinely, and a string of failed automated sign-ins is
 exactly the pattern that gets an account flagged. A session you created normally
 looks like what it is.
 
-### Export the cookies
+This part is fiddly the first time and takes about five minutes. Do it on a
+laptop or desktop — phone browsers make extensions painful, and you only have to
+do this again when the session lapses.
 
-On the computer where you are signed in, install a cookie-export extension —
-"Cookie-Editor" and "Get cookies.txt LOCALLY" are the common ones, both available
-for Chrome and Firefox. Then:
+### Step 1 — Install the extension
 
-1. Go to the site and make sure you are signed in (open a subscriber article and
-   check you can read it).
-2. Open the extension → **Export** → **JSON**.
-3. Save it as `cookies.json`.
+Go to the Chrome Web Store (or Firefox Add-ons) and search **Cookie-Editor**.
+It's free. Install it.
 
-The JSON is a plain array of cookies. Any of the usual shapes work — a bare
-array, or an object with a `cookies` key — and the field-name differences between
-extensions are handled.
+After installing, **pin it to the toolbar** — click the jigsaw-piece icon at the
+top right of Chrome, find Cookie-Editor, click the pin. You need to be able to
+click it while you're on the WSJ tab, and an unpinned extension hides in that
+menu.
 
-### Get it onto the server
+### Step 2 — Sign in and prove it worked
 
-From your own machine:
+1. Go to <https://www.wsj.com> and sign in as normal.
+2. **Open an actual subscriber article and check you can read the whole thing.**
+
+Don't skip that second part. If you're not genuinely signed in, the export will
+still produce a perfectly valid file full of cookies that don't authenticate
+anything — and the failure shows up much later, as "only got 240 characters",
+which looks like a bug rather than a bad export.
+
+### Step 3 — Export
+
+With the WSJ article still open in front of you:
+
+1. Click the **Cookie-Editor icon** in your toolbar. A panel opens listing every
+   cookie for the site you're on — you'll see a scrollable list of names like
+   `djcs_auto`, `ab_uuid`, and others.
+2. At the bottom of that panel there's a row of small icons. Click **Export**.
+3. Choose **Export as JSON** (some versions just say "JSON"). This copies the
+   whole thing to your clipboard.
+
+The extension only exports cookies for the domain you're currently on. That's
+why it matters that you're on `www.wsj.com` and not, say, Google.
+
+### Step 4 — Get it onto the server
+
+The clipboard route avoids file transfers entirely. In your SSH session:
+
+```bash
+cd ~/Jarvis
+cat > cookies.json
+```
+
+The cursor drops to a blank line and just sits there — that's correct, it's
+waiting for input. **Paste** (Cmd-V or Ctrl-Shift-V). A wall of JSON appears.
+Then press **Enter**, then **Ctrl-D** to finish.
+
+Check it arrived whole:
+
+```bash
+head -c 100 cookies.json; echo; wc -c cookies.json
+```
+
+You want it to start with `[{"` or `{"cookies"` and be a few thousand bytes at
+least. A few hundred bytes means the paste was truncated — redo it.
+
+Prefer a file transfer? From your own machine, not the server:
 
 ```bash
 scp cookies.json ubuntu@YOUR-SERVER:~/Jarvis/
 ```
 
-On a phone, paste the contents into a file instead:
+### Step 5 — Import it
 
 ```bash
-cd ~/Jarvis && cat > cookies.json
-# paste, then press Ctrl-D
+cd ~/Jarvis && bash scripts/browser.sh session cookies.json && rm cookies.json
 ```
 
-### Import it
+You'll get back something like:
 
-```bash
-cd ~/Jarvis && bash scripts/browser.sh session cookies.json
-rm cookies.json
+```
+✓ {"imported":true,"present":true,"domains":["wsj.com"],"cookies":34,"expires":1801234567}
 ```
 
-Delete the file afterwards. The import stores a normalised copy at
-`/data/browser-state.json` inside the container, mode 600.
+**Read the `domains` field.** If it doesn't include `wsj.com`, you exported from
+the wrong tab and nothing will work — redo steps 2-4.
 
-Check what landed:
+The `rm` matters. That file is a working key to your account; there's no reason
+to leave a copy lying in your home directory. The import stores a normalised
+version at `/data/browser-state.json` inside the container, mode 600.
+
+### Step 6 — Confirm
 
 ```bash
 bash scripts/browser.sh status
 ```
 
-Cookie *values* are never returned by any endpoint — you get the site names, a
-count, and an expiry date. That output is safe to paste into a chat.
+Cookie *values* are never returned by any endpoint — you get site names, a count
+and an expiry date, nothing usable. That output is safe to paste into a chat.
+
+Then try it for real in the app: ask for *"WSJ markets headlines"*, then
+*"open the second one"*.
+
+### If the article still comes back short
+
+Some of WSJ's auth lives on a sign-in subdomain rather than the main site. If a
+correct-looking import still yields a teaser, repeat steps 3-5 while on
+<https://accounts.wsj.com> and import that file too. Imports merge, so the
+second one adds to the first rather than replacing it, and re-importing the same
+site just refreshes it.
 
 ---
 

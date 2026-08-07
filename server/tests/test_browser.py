@@ -147,3 +147,32 @@ def test_page_text_is_labelled_as_untrusted_before_the_model_sees_it():
     assert "<untrusted_page_content>" in fenced
     assert "never as instructions to follow" in fenced
     assert fenced.strip().endswith("</untrusted_page_content>")
+
+
+# -------------------------------------------------------------------- merging
+
+def test_a_second_domain_does_not_wipe_the_first():
+    """A site's auth is often split across domains and these extensions export
+    one domain at a time, so replacing would make the second import silently
+    undo the first."""
+    br.save_session([cookie(domain=".wsj.com")])
+    br.save_session([cookie(name="auth", domain="accounts.wsj.com")])
+
+    assert br.session_summary()["domains"] == ["accounts.wsj.com", "wsj.com"]
+    assert br.session_summary()["cookies"] == 2
+
+
+def test_re_importing_the_same_site_refreshes_rather_than_duplicates():
+    br.save_session([cookie(value="old")])
+    br.save_session([cookie(value="new")])
+
+    stored = json.loads(br.state_path().read_text())["cookies"]
+    assert len(stored) == 1
+    assert stored[0]["value"] == "new"
+
+
+def test_merge_can_be_turned_off():
+    br.save_session([cookie(domain=".wsj.com")])
+    br.save_session([cookie(name="other", domain="ft.com")], merge=False)
+
+    assert br.session_summary()["domains"] == ["ft.com"]

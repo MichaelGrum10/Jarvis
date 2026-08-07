@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import logging
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from ..integrations.browser import (
     BrowserError,
@@ -52,8 +52,16 @@ def _cookies_from(payload) -> list[dict]:
 
 
 @router.post("/session")
-async def import_session(device: CurrentDevice, file: UploadFile = File(...)):
-    """Upload a cookie export from your own browser."""
+async def import_session(
+    device: CurrentDevice,
+    file: UploadFile = File(...),
+    replace: bool = Form(False),
+):
+    """Upload a cookie export from your own browser.
+
+    Merges with what's already stored unless `replace` is set, so a site whose
+    authentication spans two domains can be imported in two goes.
+    """
     raw = await file.read()
     if not raw:
         raise HTTPException(400, "Empty file.")
@@ -66,7 +74,7 @@ async def import_session(device: CurrentDevice, file: UploadFile = File(...)):
         raise HTTPException(400, f"Not valid JSON: {exc}") from exc
 
     try:
-        summary = save_session(_cookies_from(payload))
+        summary = save_session(_cookies_from(payload), merge=not replace)
     except BrowserError as exc:
         raise HTTPException(400, str(exc)) from exc
 

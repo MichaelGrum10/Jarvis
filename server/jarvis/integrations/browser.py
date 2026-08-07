@@ -107,13 +107,20 @@ def session_summary() -> dict:
     }
 
 
-def save_session(cookies: list[dict]) -> dict:
+def save_session(cookies: list[dict], *, merge: bool = True) -> dict:
     """Store imported cookies as Playwright storage state.
 
     Accepts what browser extensions actually export, which is not one format:
     `expirationDate` vs `expires`, `sameSite` in several spellings, and entries
     missing fields Playwright insists on. Normalising here rather than rejecting
     means an export from any common extension works.
+
+    Merges by default, because a single site's authentication is often spread
+    across domains — WSJ keeps some of it on a sign-in subdomain — and these
+    extensions export one domain at a time. Replacing would make the second
+    import silently undo the first, which reads as the export being wrong.
+    Cookies are keyed on (name, domain, path), so re-importing the same site
+    refreshes it rather than accumulating duplicates.
     """
     if not isinstance(cookies, list) or not cookies:
         raise BrowserError("No cookies found in that export.")
@@ -150,6 +157,15 @@ def save_session(cookies: list[dict]) -> dict:
         raise BrowserError("That export had no usable cookies — every entry was missing a name or domain.")
 
     path = state_path()
+    if merge and path.is_file():
+        try:
+            existing = json.loads(path.read_text()).get("cookies", [])
+        except (json.JSONDecodeError, OSError):
+            existing = []
+        keyed = {(c.get("name"), c.get("domain"), c.get("path")): c for c in existing}
+        keyed.update({(c["name"], c["domain"], c["path"]): c for c in cleaned})
+        cleaned = list(keyed.values())
+
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"cookies": cleaned, "origins": []}, indent=1))
     # Session cookies are as good as the password for the sites they cover.
