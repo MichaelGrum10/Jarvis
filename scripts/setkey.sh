@@ -38,13 +38,27 @@ esac
 # where it surfaces as an opaque "Please pass a valid API key" from the provider.
 # These are warnings, not errors: key formats change, and being wrong about one
 # shouldn't stop someone configuring their own server.
-warn_shape() { printf "${YELLOW}! %s${RESET}\n" "$1"; }
+WARNED=0
+warn_shape() { WARNED=1; printf "${YELLOW}! %s${RESET}\n" "$1"; }
 
 case "$NAME" in
   GEMINI_API_KEY)
+    # Google hands out several credential types that all look like "the key",
+    # and only one of them works here. Naming the wrong one is far more useful
+    # than repeating what the right one looks like.
     case "$VALUE" in
-      AIza*) [ ${#VALUE} -ge 35 ] || warn_shape "Google keys are ~39 characters — this looks truncated." ;;
-      *)     warn_shape "Google AI Studio keys start with 'AIza'. Check you copied the whole key from aistudio.google.com/apikey" ;;
+      AIza*)
+        [ ${#VALUE} -ge 35 ] || warn_shape "Google keys are ~39 characters — this looks truncated." ;;
+      ya29.*)
+        warn_shape "That's an OAuth access token, not an API key — it expires in about an hour. Get a key at aistudio.google.com/apikey" ;;
+      gsk_*)
+        warn_shape "That's a Groq key. Set it with: bash scripts/setkey.sh GROQ_API_KEY $VALUE" ;;
+      projects/*|*/locations/*)
+        warn_shape "That's a Google Cloud resource name, not an API key. Keys come from aistudio.google.com/apikey — not the Cloud Console." ;;
+      '{'*)
+        warn_shape "That's a service-account JSON file. Vertex AI uses those; this needs an AI Studio key from aistudio.google.com/apikey" ;;
+      *)
+        warn_shape "Google AI Studio keys usually start with 'AIza' — saving it anyway, since formats change." ;;
     esac
     ;;
   GROQ_API_KEY)
@@ -57,6 +71,12 @@ case "$NAME" in
     case "$VALUE" in csk-*|csk_*) ;; *) warn_shape "Cerebras keys start with 'csk-'." ;; esac
     ;;
 esac
+
+# Say so out loud. A yellow line above a green "✓ Updated" reads as a failure
+# unless it's spelled out that the value went in regardless.
+if [ "$WARNED" -eq 1 ]; then
+  printf "${DIM}  (that's advice, not a rejection — saving it anyway)${RESET}\n"
+fi
 
 # Values are single-quoted on write. Unquoted, anything containing '#' is
 # truncated at that character and trailing spaces are dropped, silently.
