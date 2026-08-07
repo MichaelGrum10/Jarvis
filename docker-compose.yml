@@ -3,6 +3,11 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
+      args:
+        # Reads BROWSER_ENABLED from .env. Chromium is only installed into the
+        # image when this is true, so turning the feature on means a rebuild:
+        # bash scripts/update.sh
+        BROWSER_ENABLED: ${BROWSER_ENABLED:-false}
     container_name: jarvis
     restart: unless-stopped
     env_file: .env
@@ -12,6 +17,9 @@ services:
       # Where the self-improvement engine works. Only meaningful with the
       # ./:/app/repo mount above uncommented.
       AUTONOMY_REPO_PATH: /app/repo
+    # Docker's default 64MB of shared memory makes Chromium crash on heavy pages.
+    # Harmless when the browser is off; costs nothing until used.
+    shm_size: 256m
     volumes:
       - jarvis-data:/data
       # Self-improvement needs a real git repo to branch and commit in, and the

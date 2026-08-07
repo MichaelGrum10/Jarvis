@@ -198,6 +198,7 @@ def load_all_tools() -> ToolRegistry:
         "stocks_tool",
         "news_tool",
         "search_tool",
+        "browser_tool",
         "places_tool",
         "device_tool",
         "memory_tool",

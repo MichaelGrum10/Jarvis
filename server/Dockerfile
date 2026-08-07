@@ -15,6 +15,16 @@ COPY server/pyproject.toml /app/server/pyproject.toml
 COPY server/jarvis/__init__.py /app/server/jarvis/__init__.py
 RUN pip install --upgrade pip && pip install -e /app/server
 
+# Chromium is ~400MB installed and most setups never open a page with it, so it
+# is opt-in at build time. docker-compose passes this through from .env, which
+# means `BROWSER_ENABLED=true` plus a rebuild is the whole switch — there is no
+# second place to remember.
+ARG BROWSER_ENABLED=false
+RUN if [ "$BROWSER_ENABLED" = "true" ]; then \
+      pip install "playwright>=1.47" && \
+      playwright install --with-deps chromium; \
+    fi
+
 COPY server /app/server
 COPY web /app/web
 

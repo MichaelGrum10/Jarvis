@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from .api import auth, autonomy, bridge, chat, device, identity, skills, voice
+from .api import auth, autonomy, bridge, browser, chat, device, identity, skills, voice
 from .config import get_settings
 from .db import init_db
 from .llm.client import get_llm
@@ -48,6 +48,12 @@ async def lifespan(app: FastAPI):
     yield
     await get_improver().stop()
     await get_llm().aclose()
+    if settings.browser_enabled:
+        # Chromium is a child process, not a coroutine — without this it survives
+        # the reload and the next start finds the port and profile still held.
+        from .integrations.browser import get_browser
+
+        await get_browser().close()
 
 
 app = FastAPI(title="Jarvis", version="0.1.0", lifespan=lifespan)
@@ -70,6 +76,7 @@ app.include_router(autonomy.router)
 app.include_router(voice.router)
 app.include_router(identity.router)
 app.include_router(skills.router)
+app.include_router(browser.router)
 
 
 @app.get("/api/health")

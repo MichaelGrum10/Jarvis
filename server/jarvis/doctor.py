@@ -447,6 +447,51 @@ def check_config(report: Report) -> None:
         report.bad(f"  {blocker['what']}", "self-improvement can't run", blocker["fix"])
 
 
+def check_browser(report: Report) -> None:
+    header("Browser reader")
+    import datetime as when
+
+    from .integrations.browser import session_summary
+
+    settings = get_settings()
+    if not settings.browser_enabled:
+        report.ok("Browser", "off — pages are read over plain HTTP")
+        return
+
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        report.bad(
+            "Playwright", "enabled, but not installed in this image",
+            "The image was built before this was turned on. Rebuild with:\n"
+            "bash scripts/browser.sh on",
+        )
+        return
+    report.ok("Playwright", "installed")
+
+    summary = session_summary()
+    if not summary["present"]:
+        report.warn(
+            "Session", "none stored — subscriber-only pages will show a teaser",
+            "Import one: docs/browser.md",
+        )
+        return
+
+    expires = summary["expires"]
+    detail = f"{summary['cookies']} cookies for {', '.join(summary['domains'][:4])}"
+    if expires is None:
+        report.ok("Session", f"{detail} (session cookies, no fixed expiry)")
+        return
+
+    days = (expires - when.datetime.now(when.UTC).timestamp()) / 86400
+    if days <= 0:
+        report.bad("Session", f"{detail} — expired", "Re-import: docs/browser.md")
+    elif days < 3:
+        report.warn("Session", f"{detail} — expires in {days:.1f} days")
+    else:
+        report.ok("Session", f"{detail}, {days:.0f} days left")
+
+
 async def check_voice(report: Report) -> None:
     header("Voice identity")
     from sqlalchemy import select
@@ -504,6 +549,7 @@ async def main() -> int:
     await check_calendar(report)
     await check_messages(report)
     await check_voice(report)
+    check_browser(report)
     await check_outbound(report)
 
     print()

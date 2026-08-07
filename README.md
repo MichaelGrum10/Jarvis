@@ -21,6 +21,7 @@ anywhere in the stack.
 | **Stocks** — quotes, history, ticker news | yfinance | free, no key |
 | **WSJ headlines** | WSJ public RSS feeds | free |
 | **Web search + page reading** | SearXNG → Brave → DuckDuckGo | free |
+| **Full articles** — rendered + signed in | Chromium via Playwright, imported session | free, opt-in |
 | **Nearby places** — "I need a haircut" | OpenStreetMap, using *device* location | free, no key |
 | **Open apps on your device** | URL schemes + Apple Shortcuts | free |
 | **Voice** — HUD, wake word, speaks back | Web Speech API + Groq Whisper | free |
@@ -52,13 +53,14 @@ no history, and it can't send replies. See
 [docs/iphone-messages.md](docs/iphone-messages.md). **This is the one capability
 with a hardware prerequisite.**
 
-**WSJ headlines come from their public feeds, not your account.** The Journal
-publishes free RSS for every section with headlines and summaries, and that's what
-Jarvis reads. It does *not* log in with your subscription to scrape article text —
-automating a paywall login breaches the WSJ's terms of use and risks your account
-getting flagged. You get every headline and summary; tap through to read the full
-piece signed in. If you specifically want full article text automated, that's a
-decision to make knowingly, and it isn't what this ships with.
+**WSJ headlines come from public feeds by default.** Out of the box you get every
+headline and summary from the WSJ's free RSS, and a link to read the piece in your
+subscription.
+
+Full article text is available but opt-in: [docs/browser.md](docs/browser.md) turns
+on a real browser that reads pages signed in, using a session you export from your
+own browser rather than a password Jarvis holds. Be clear-eyed about it — WSJ's terms
+prohibit automated access, so this is a decision to make knowingly. It ships off.
 
 **You need a domain, but it can be free.** A domain is just a name pointing at
 your server's IP address — and you need one because HTTPS certificates can't be

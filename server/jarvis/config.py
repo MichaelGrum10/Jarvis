@@ -143,6 +143,22 @@ class Settings(BaseSettings):
     brave_api_key: str = ""  # optional fallback, free tier
     user_agent: str = "Jarvis/0.1 (self-hosted personal assistant)"
 
+    # --- real browser (Playwright) ---
+    # Off by default: it adds ~400MB to the image and a few hundred MB of RAM
+    # while a page is open, and most of the web reads fine over plain HTTP.
+    # Turn on for JavaScript-rendered pages and subscriber-only articles.
+    browser_enabled: bool = False
+    # Chromium's own UA is used when this is blank. The default Jarvis UA above
+    # is honest but unrecognised, and sites serve a degraded page to unknown
+    # agents — which defeats the point of rendering it properly.
+    browser_user_agent: str = ""
+    browser_max_chars: int = 8000
+    # Use a Chromium already on the machine instead of the one Playwright
+    # downloads. Worth having because the two are version-locked: a Playwright
+    # upgrade looks for a build number the installed browser doesn't have, and
+    # fails with a message about downloading rather than about the mismatch.
+    browser_executable_path: str = ""
+
     # --- places (OpenStreetMap: free, no key) ---
     nominatim_url: str = "https://nominatim.openstreetmap.org"
     overpass_url: str = "https://overpass-api.de/api/interpreter"
@@ -206,6 +222,9 @@ class Settings(BaseSettings):
             ],
             "calendar": [("CALDAV_USERNAME", self.caldav_user), ("CALDAV_PASSWORD", self.caldav_pass)],
             "messages": [("BRIDGE_TOKEN", self.bridge_token)],
+            # A boolean, not a credential — but it gates its tools the same way,
+            # so the model is never offered a browser the image may not contain.
+            "browser": [("BROWSER_ENABLED", self.browser_enabled)],
             "auth": [("AUTH_SECRET", self.auth_secret), ("ACCESS_PASSWORD", self.access_password)],
         }
         return [name for name, value in needs.get(feature, []) if not value]

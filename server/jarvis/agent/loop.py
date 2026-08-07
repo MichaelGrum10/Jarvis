@@ -106,6 +106,15 @@ class Agent:
         # back to when the user says "actually, move it".
         extra_system = (extra_system + recent_events.preamble(ctx.conversation_id)).strip()
 
+        # Which sites it can actually open. Without this it hedges — declining to
+        # open a WSJ article as paywalled while holding a working session for it.
+        try:
+            from ..tools.browser_tool import session_note
+
+            extra_system = (extra_system + session_note()).strip()
+        except Exception:
+            log.exception("Could not read browser session state")
+
         messages: list[dict] = [
             {
                 "role": "system",

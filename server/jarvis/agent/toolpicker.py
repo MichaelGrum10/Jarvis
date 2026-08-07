@@ -54,6 +54,10 @@ DOMAIN_HINTS: dict[str, tuple[str, ...]] = {
         "search", "look up", "google", "find out", "what is", "who is", "how do",
         "how to", "why", "explain", "research", "website", "link", "read this",
         "according to", "latest",
+        # Opening a specific piece. "read it to me" after a headline list carries
+        # no search word at all, and browse_page lives in this domain.
+        "open it", "open the", "read it", "read the", "full article", "whole thing",
+        "expand", "what does it say", "paywall", "article", "http",
     ),
     "places": (
         "near", "nearby", "around here", "close by", "restaurant", "cafe", "coffee",

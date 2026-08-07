@@ -73,8 +73,9 @@ async def _fetch_feed(url: str, limit: int) -> list[dict]:
     description=(
         "Fetch current Wall Street Journal headlines with summaries from the WSJ's public "
         "feeds. Covers top news, markets, business, tech, opinion and lifestyle. Returns "
-        "headline + summary + link; full article text is behind the WSJ paywall, so give the "
-        "user the link to read the whole piece in their subscription."
+        "headline + summary + link. If the user asks to open, read or expand one of these, "
+        "pass its link to browse_page — with a stored WSJ session that returns the full "
+        "article. Only say a piece is paywalled if browse_page has actually failed on it."
     ),
     parameters={
         "type": "object",
@@ -103,7 +104,10 @@ async def wsj_headlines(section: str = "top", limit: int = 12):
             "section": section,
             "count": len(items),
             "articles": items,
-            "note": "Summaries are from WSJ's public feed; open the link to read in full.",
+            "note": (
+                "Summaries are from WSJ's public feed. To read one in full, call "
+                "browse_page with its link."
+            ),
         },
         display={"type": "news", "source": "WSJ", "articles": items},
     )
