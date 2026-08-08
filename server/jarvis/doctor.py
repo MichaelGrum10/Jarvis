@@ -411,6 +411,23 @@ def check_config(report: Report) -> None:
     report.ok("Timezone", settings.timezone)
     report.ok("Database", str(settings.db_path))
 
+    # Which provider keys are actually loaded. Grepping .env only proves a line
+    # exists — an empty value looks identical and does nothing.
+    configured, blank = [], []
+    for name in ("groq", "gemini", "cerebras", "openrouter", "together",
+                 "github_models", "mistral", "nvidia", "huggingface", "custom"):
+        value = getattr(settings, f"{name}_api_key", "")
+        if value.strip():
+            configured.append(name)
+        elif value:
+            blank.append(name)
+    report.ok("Provider keys", ", ".join(configured) or "none")
+    if blank:
+        report.warn(
+            "Empty keys", f"set but blank: {', '.join(blank)}",
+            "A blank value is the same as unset. Re-run scripts/setkey.sh with the key.",
+        )
+
     if settings.autonomy_enabled:
         report.warn("Autonomy", "ENABLED — Jarvis may modify its own source")
     else:

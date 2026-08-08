@@ -86,3 +86,12 @@ def test_genuinely_absent_model_is_still_reported():
 
     assert missing == ["gemini:gemini-2.0-flash (gemini-2.0-flash)"]
     assert unverified == []
+
+
+def test_a_configured_key_that_is_empty_is_reported_as_missing():
+    """A setting present in .env with an empty value reads as configured when
+    you grep for it, and does nothing. The two need telling apart."""
+    from jarvis.config import Settings
+
+    assert Settings(openrouter_api_key="").openrouter_api_key == ""
+    assert Settings(openrouter_api_key="sk-or-x").openrouter_api_key == "sk-or-x"
