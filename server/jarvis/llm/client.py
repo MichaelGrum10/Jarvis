@@ -310,7 +310,7 @@ class GroqClient:
                 return response
 
             except _RateLimited as exc:
-                endpoint.rest(exc.retry_after)
+                endpoint.rest(exc.retry_after, escalate=False)
                 errors.append(f"{endpoint.label}: rate limited")
                 log.info("Rate limited on %s, moving on", endpoint.label)
 
@@ -692,13 +692,22 @@ def normalise_model_id(model_id: str) -> str:
 
 
 def _retry_after(response: httpx.Response) -> float | None:
-    raw = response.headers.get("retry-after")
-    if not raw:
-        return None
-    try:
-        return max(0.0, min(float(raw), 120.0))
-    except ValueError:
-        return None
+    """How long the provider says to wait, from whichever header it uses.
+
+    Groq does not send Retry-After on a token-per-minute refusal; it sends
+    `x-ratelimit-reset-tokens: 19.222s`. Reading only Retry-After meant falling
+    back to a guessed cooldown that then escalated — 20s, 40s, 80s — for a
+    bucket that refills on a fixed schedule and never needed the second wait.
+    """
+    for header in ("retry-after", "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests"):
+        raw = response.headers.get(header)
+        if not raw:
+            continue
+        try:
+            return max(0.0, min(float(str(raw).strip().rstrip("s")), 120.0))
+        except ValueError:
+            continue
+    return None
 
 
 def error_payload(response: httpx.Response) -> dict:

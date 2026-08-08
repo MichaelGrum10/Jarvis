@@ -932,3 +932,48 @@ async def test_a_stranded_turn_is_finished_by_the_other_provider():
         assert response.content == "Nothing on today."
     finally:
         await client.aclose()
+
+
+def test_a_rate_limit_does_not_get_worse_each_time_it_is_hit():
+    """A per-minute bucket refills on a fixed schedule. Doubling the wait turns
+    a cleared 20-second limit into "capacity returns in about 39s"."""
+    endpoint = Endpoint(model="m", api_key="k", base_url=GROQ)
+
+    endpoint.rest(escalate=False)
+    first = endpoint.seconds_until_available
+    endpoint.succeeded()
+    endpoint.rest(escalate=False)
+
+    assert abs(endpoint.seconds_until_available - first) < 1
+
+
+def test_repeated_rate_limits_stay_flat_while_real_faults_still_back_off():
+    limited = Endpoint(model="m", api_key="k", base_url=GROQ)
+    broken = Endpoint(model="m", api_key="k", base_url=GROQ)
+
+    for _ in range(3):
+        limited.rest(escalate=False)
+        broken.rest()
+
+    assert limited.seconds_until_available < 25
+    assert broken.seconds_until_available > 60, "a failing provider should still back off"
+
+
+def test_groqs_own_reset_header_is_used_when_retry_after_is_absent():
+    """Groq sends no Retry-After on a token-per-minute refusal — it sends
+    x-ratelimit-reset-tokens, and ignoring it meant guessing."""
+    from jarvis.llm.client import _retry_after
+
+    class R:
+        headers = {"x-ratelimit-reset-tokens": "19.222s"}
+
+    assert 19 <= _retry_after(R()) <= 20
+
+
+def test_retry_after_still_wins_when_present():
+    from jarvis.llm.client import _retry_after
+
+    class R:
+        headers = {"retry-after": "5", "x-ratelimit-reset-tokens": "19.222s"}
+
+    assert _retry_after(R()) == 5.0

@@ -88,14 +88,21 @@ class Endpoint:
     def seconds_until_available(self) -> float:
         return max(0.0, self.cooldown_until - time.monotonic())
 
-    def rest(self, seconds: float | None = None) -> None:
-        """Take this endpoint out of rotation briefly."""
+    def rest(self, seconds: float | None = None, *, escalate: bool = True) -> None:
+        """Take this endpoint out of rotation briefly.
+
+        `escalate` is for faults that get worse the more you retry them — a
+        provider in trouble, a hard daily cap. A per-minute rate limit is not
+        one: that bucket refills on a fixed schedule, so doubling the wait each
+        time turns a 20-second pause into 40, then 80, for a limit that had
+        already cleared. That is how a healthy pool reported "capacity returns
+        in about 39s" while both providers were ready to answer.
+        """
         self.consecutive_failures += 1
         self.failures += 1
         if seconds is None:
-            # Back off further each time an endpoint keeps refusing, so a hard
-            # daily cap doesn't get hammered once a minute for the rest of the day.
-            seconds = min(DEFAULT_COOLDOWN * (2 ** (self.consecutive_failures - 1)), MAX_COOLDOWN)
+            steps = self.consecutive_failures - 1 if escalate else 0
+            seconds = min(DEFAULT_COOLDOWN * (2**steps), MAX_COOLDOWN)
         self.cooldown_until = time.monotonic() + max(0.0, seconds)
 
     def succeeded(self) -> None:
