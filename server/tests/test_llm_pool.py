@@ -1133,3 +1133,61 @@ async def test_a_provider_error_is_not_called_a_misconfiguration():
         assert "transient" in message
     finally:
         await client.aclose()
+
+
+def test_every_null_is_dropped_when_a_message_travels():
+    """OpenAI-shaped responses carry optional fields as explicit nulls, and
+    Gemini rejects any of them: "Value is not a string: null". Normalising only
+    `content` left refusal, audio and the rest to fail the same way."""
+    from jarvis.llm.client import messages_for
+
+    from_groq = {
+        "role": "assistant",
+        "content": None,
+        "refusal": None,
+        "audio": None,
+        "_origin": GROQ,
+        "tool_calls": [{
+            "id": None, "type": "function",
+            "function": {"name": "calendar_list", "arguments": None},
+        }],
+    }
+
+    sent = messages_for([from_groq], GEMINI_URL)[0]
+
+    assert None not in sent.values(), f"a null survived: {sent}"
+    assert sent["content"] == ""
+    call = sent["tool_calls"][0]
+    assert None not in call.values()
+    assert None not in call["function"].values()
+    assert call["function"]["arguments"] == "{}", "an absent argument object is empty, not null"
+
+
+def test_no_null_survives_anywhere_in_a_travelled_message():
+    """Checked structurally rather than field by field: the last two attempts at
+    this each fixed the null they knew about and shipped the next one."""
+    from jarvis.llm.client import messages_for
+
+    def nulls(value, path="msg"):
+        if value is None:
+            yield path
+        elif isinstance(value, dict):
+            for k, v in value.items():
+                yield from nulls(v, f"{path}.{k}")
+        elif isinstance(value, list):
+            for i, v in enumerate(value):
+                yield from nulls(v, f"{path}[{i}]")
+
+    groq_shaped = {
+        "role": "assistant", "content": None, "refusal": None, "audio": None,
+        "reasoning": None, "annotations": [], "_origin": GROQ,
+        "tool_calls": [{
+            "id": "call_abc", "type": "function", "index": None,
+            "function": {"name": "calendar_find_free", "arguments": '{"date":"tomorrow"}'},
+        }],
+    }
+
+    sent = messages_for([groq_shaped], GEMINI_URL)[0]
+
+    assert list(nulls(sent)) == []
+    assert sent["tool_calls"][0]["function"]["name"] == "calendar_find_free"

@@ -191,18 +191,28 @@ def messages_for(messages: list[dict], base_url: str) -> list[dict]:
 
         clean = {k: v for k, v in message.items() if k != "_origin"}
         if origin != base_url:
-            clean = {k: v for k, v in clean.items() if k in _STANDARD_KEYS}
-            # Null content is legal OpenAI and Groq emits it on every tool-call
-            # message, but Gemini's validator refuses it outright — "Value is not
-            # a string: null". An empty string means the same thing to everyone.
-            if clean.get("content") is None:
-                clean["content"] = ""
+            # Every null goes, not just content. OpenAI-shaped responses carry
+            # optional fields as explicit nulls — refusal, audio, annotations —
+            # and Gemini's validator rejects any of them with "Value is not a
+            # string: null". An absent optional field means the same thing to
+            # every provider; a null one does not.
+            clean = {
+                k: v for k, v in clean.items()
+                if k in _STANDARD_KEYS and v is not None
+            }
+            # Except content, which must exist on an assistant message even when
+            # the model said nothing because it was calling a tool.
+            if clean.get("role") == "assistant":
+                clean.setdefault("content", "")
             if clean.get("tool_calls"):
                 clean["tool_calls"] = [
                     {
-                        "id": c.get("id"),
+                        "id": c.get("id") or "",
                         "type": "function",
-                        "function": c.get("function", {}),
+                        "function": {
+                            "name": (c.get("function") or {}).get("name") or "",
+                            "arguments": (c.get("function") or {}).get("arguments") or "{}",
+                        },
                     }
                     for c in clean["tool_calls"]
                 ]
