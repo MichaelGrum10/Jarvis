@@ -375,3 +375,23 @@ def test_a_parameter_count_is_not_mistaken_for_a_version():
     assert _version_of("gpt-oss-120b") == 0.0
     assert _version_of("models/gemini-3.6-flash") == 3.6
     assert _version_of("llama-3.3-70b-versatile") == 3.3
+
+
+def test_openrouters_free_models_are_tried_before_its_paid_ones():
+    """Everything without the `:free` suffix on that catalogue answers 402, so
+    trying a paid model first spends a request to learn nothing."""
+    from jarvis.benchmark import _candidate_models
+
+    catalogue = {
+        "meta-llama/llama-3.3-70b-instruct",
+        "meta-llama/llama-3.3-70b-instruct:free",
+        "qwen/qwen-2.5-72b-instruct:free",
+        "openai/gpt-4o",
+    }
+
+    order = _candidate_models(catalogue, exclude="nothing")
+
+    assert order[0].endswith(":free")
+    assert order.index("openai/gpt-4o") > order.index(
+        "meta-llama/llama-3.3-70b-instruct:free"
+    )

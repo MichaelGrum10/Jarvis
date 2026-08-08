@@ -336,7 +336,10 @@ def _setting_for(endpoint) -> str:
 # transcription, embeddings, image models, and small models that cannot hold a
 # 30-schema turn — so candidates are ordered by what has actually worked here
 # rather than tried alphabetically.
-_PROMISING = ("gpt-oss-120b", "flash", "70b", "qwen", "gpt-4o", "mistral-large", "glm")
+# "free" leads because OpenRouter marks its zero-cost models with a `:free`
+# suffix and everything else on that catalogue answers 402. No other provider
+# puts the word in a model name, so this costs them nothing.
+_PROMISING = ("free", "gpt-oss-120b", "flash", "70b", "qwen", "gpt-4o", "mistral-large", "glm")
 
 # Matched as whole tokens, never as substrings. "gemini" contains "mini", so a
 # substring test silently discards every Gemini model — including while trying
@@ -497,8 +500,8 @@ async def main() -> int:
         print(f"{YELLOW}Configured models your key cannot reach:{RESET}")
         for endpoint in missing:
             print(f"  {RED}✗{RESET} {endpoint.label}")
-            print(f"{DIM}      fix: bash scripts/setkey.sh {_setting_for(endpoint)} "
-                  f"a-model-from-the-list-below{RESET}")
+            print(f"{DIM}      {_setting_for(endpoint)} — a replacement is searched "
+                  f"for below{RESET}")
         print()
 
     for base_url, models in catalogue.items():
@@ -560,10 +563,17 @@ async def main() -> int:
     # An endpoint that failed for a reason a different model would fix. A rate
     # limit is excluded — that one is about timing, and swapping models to dodge
     # it would quietly move you off the model you chose.
-    repairable = [
+    #
+    # Endpoints whose model is absent from the provider's catalogue come first,
+    # and they were the omission that mattered: they are skipped before testing,
+    # so they never produce a result row, so the search never reached the one
+    # case where the catalogue has already proved a replacement is needed.
+    repairable: list[tuple] = [(e, {"error": "model not in this provider's catalogue"})
+                               for e in missing]
+    repairable += [
         (e, r) for e, r in zip(testable, rows, strict=False)
         if not r.get("tools_large")
-        and any(code in str(r.get("error", "")) for code in ("402", "404", "429"))
+        and any(code in str(r.get("error", "")) for code in ("402", "404", "410", "429"))
         and "rate limit reached" not in str(r.get("error", "")).lower()
     ]
     if repairable:
