@@ -264,6 +264,10 @@ def verdict(row: dict) -> str:
             return f"{RED}key rejected{RESET}"
         if "402" in error:
             return f"{RED}needs a paid plan{RESET}"
+        if "410" in error:
+            # Gone, in the HTTP sense that means it. GitHub Models answers this
+            # during its retirement brownouts.
+            return f"{RED}service withdrawn{RESET}"
         if "429" in error:
             # A 429 on a benchmark's first call is not a busy minute — nothing
             # has been spent yet. On these providers it means this model carries
@@ -349,12 +353,29 @@ def _tokens(model: str) -> set[str]:
     return set(re.split(r"[^a-z0-9]+", model.lower())) - {""}
 
 
+def _version_of(model: str) -> float:
+    """The version number in a model name, for preferring the newest.
+
+    Only a dotted number counts. A bare integer is usually a parameter count or
+    a date — reading 120 out of "gpt-oss-120b" as a version would rank it above
+    everything.
+    """
+    match = re.search(r"\b(\d+\.\d+)\b", model)
+    return float(match.group(1)) if match else 0.0
+
+
 def _candidate_models(catalogue: set[str], exclude: str) -> list[str]:
-    """Models worth trying as a replacement, best first."""
-    def rank(name: str) -> tuple[int, int]:
+    """Models worth trying as a replacement, best first.
+
+    Newest first within a family, because every attempt costs a real request
+    against a quota that is usually the reason we are here. Searching a Gemini
+    catalogue in name order tried 2.0 and 2.5 — one out of quota, one withdrawn
+    — before reaching the 3.6 that worked.
+    """
+    def rank(name: str) -> tuple[int, float, int]:
         lowered = name.lower()
         promise = next((i for i, p in enumerate(_PROMISING) if p in lowered), len(_PROMISING))
-        return promise, len(name)
+        return promise, -_version_of(lowered), len(name)
 
     usable = [
         m for m in catalogue

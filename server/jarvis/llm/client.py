@@ -610,6 +610,7 @@ class GroqClient:
             402: "needs a paid plan",
             403: "key has no access to this model",
             404: "model does not exist on this provider",
+            410: "this service has been withdrawn",
         }.get(response.status_code)
         if permanent:
             raise _BadCredentials(f"{permanent}: {_error_message(response)}", permanent)

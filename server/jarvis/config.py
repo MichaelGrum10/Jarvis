@@ -116,18 +116,20 @@ class Settings(BaseSettings):
     # The `models/` prefix is Google's own form and is kept because that is the
     # exact string that was verified; the bare name is also accepted, but was
     # not tested.
-    gemini_model: str = "models/gemini-3.5-flash"
+    gemini_model: str = "models/gemini-3.6-flash"
 
     # GitHub Models — free for GitHub accounts, and the way to reach frontier
     # models (GPT-class) without paying. Rate limits are tight, so it earns its
     # place as a last resort for hard questions rather than the everyday default.
     github_models_api_key: str = ""
-    # models.inference.ai.azure.com was the original host and now answers 404
-    # with an empty body — which reads as "model not available" rather than
-    # "wrong address", so it points at the model name instead of the URL. The
-    # current endpoint is models.github.ai, where model ids carry a publisher
-    # prefix. Unverified on any account here: `python -m jarvis.benchmark` is
-    # what will say whether it works for you.
+    # Do not expect this to work. Measured on a real account, models.github.ai
+    # answers 410 "GitHub Models is temporarily unavailable as part of a
+    # scheduled retirement brownout" — the service is being withdrawn, so no
+    # endpoint or model name here will help. Kept configured rather than removed
+    # because a brownout is not a shutdown and the settings cost nothing, but it
+    # is not a capacity plan. The older models.inference.ai.azure.com host is
+    # fully gone: it answers 404 with an empty body, which reads as a bad model
+    # name rather than a bad address.
     github_models_base_url: str = "https://models.github.ai/inference"
     github_models_model: str = "openai/gpt-4o-mini"
 

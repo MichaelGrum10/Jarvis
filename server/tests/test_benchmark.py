@@ -350,3 +350,28 @@ def test_a_base_url_setting_is_derivable_for_every_provider():
             _setting_for(endpoint),
         ):
             assert setting.lower() in fields, f"{setting} is not a real setting"
+
+
+def test_the_newest_model_in_a_family_is_tried_first():
+    """Every attempt costs a request against the quota that is usually the
+    reason for searching. Name order tried 2.0 and 2.5 — one out of quota, one
+    withdrawn — before reaching the 3.6 that worked."""
+    from jarvis.benchmark import _candidate_models
+
+    catalogue = {
+        "models/gemini-2.0-flash", "models/gemini-2.5-flash",
+        "models/gemini-3.6-flash", "models/gemini-3.5-flash",
+    }
+
+    order = _candidate_models(catalogue, exclude="models/gemini-3.5-flash")
+
+    assert order[0] == "models/gemini-3.6-flash"
+
+
+def test_a_parameter_count_is_not_mistaken_for_a_version():
+    """"gpt-oss-120b" would otherwise rank as version 120 and win everything."""
+    from jarvis.benchmark import _version_of
+
+    assert _version_of("gpt-oss-120b") == 0.0
+    assert _version_of("models/gemini-3.6-flash") == 3.6
+    assert _version_of("llama-3.3-70b-versatile") == 3.3
