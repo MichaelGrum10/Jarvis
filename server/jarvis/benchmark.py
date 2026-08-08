@@ -307,6 +307,8 @@ _PREFIX_BY_HOST = (
     ("models.inference.ai.azure.com", "GITHUB_MODELS"),
     ("models.github.ai", "GITHUB_MODELS"),
     ("api.mistral.ai", "MISTRAL"),
+    ("integrate.api.nvidia.com", "NVIDIA"),
+    ("router.huggingface.co", "HUGGINGFACE"),
 )
 
 

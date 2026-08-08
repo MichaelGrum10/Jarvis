@@ -1020,3 +1020,34 @@ async def test_a_turn_that_already_ran_tools_waits_rather_than_discarding_the_wo
         assert response.content == "Nothing on today."
     finally:
         await client.aclose()
+
+
+def test_the_custom_slot_joins_the_pool_like_any_other_provider():
+    """Free tiers appear and close faster than a hardcoded list keeps up, so
+    adding one must not require a code change."""
+    pool = build_pool(settings(
+        custom_api_key="k",
+        custom_base_url="https://api.example.com/v1",
+        custom_model="some-model",
+    ))
+
+    assert any(e.label == "custom:some-model" for e in pool.endpoints)
+
+
+def test_a_half_configured_custom_slot_is_ignored():
+    """It has no defaults to fall back on, so a key with no URL would build an
+    endpoint that fails every request with a confusing error."""
+    for partial in (
+        {"custom_api_key": "k"},
+        {"custom_api_key": "k", "custom_base_url": "https://api.example.com/v1"},
+        {"custom_api_key": "k", "custom_model": "m"},
+    ):
+        pool = build_pool(settings(**partial))
+        assert not any(e.label.startswith("custom:") for e in pool.endpoints), partial
+
+
+def test_new_providers_are_reachable_from_settings():
+    pool = build_pool(settings(nvidia_api_key="k", huggingface_api_key="k"))
+    labels = {e.label.split(":", 1)[0] for e in pool.endpoints}
+
+    assert {"nvidia", "huggingface"} <= labels

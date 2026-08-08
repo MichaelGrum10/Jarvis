@@ -1,5 +1,40 @@
 # Getting more capacity (and a better model)
 
+## Providers worth trying, and what happened to each
+
+Measured on a real free account, not quoted from a comparison page — several of
+which turned out to be wrong in the direction that costs you an afternoon.
+
+| Provider | Result | Verdict |
+|---|---|---|
+| **Groq** | works, 8k tokens/min, 1k requests/day | the primary |
+| **Google AI Studio** | works, much larger per-minute allowance | the backup |
+| **Cerebras** | 402 Payment required on every model | not free in practice |
+| **GitHub Models** | 410, "scheduled retirement brownout" | being withdrawn |
+| **OpenRouter** | free models exist; 50 requests/day under $10 credit | thin but real |
+| **Together** | has free models | untested here |
+| **NVIDIA** | free credits on signup | untested here |
+| **Hugging Face** | monthly allowance on a free account | untested here |
+| **Mistral** | generous — requires opting into training on your prompts | no |
+
+Two of those deserve their own note. A key that authenticates and a model that
+appears in the catalogue prove nothing: Cerebras does both and then declines to
+serve a completion. And Mistral's quota is the best on offer, but this assistant
+sends your calendar, mail and messages to whichever provider answers, so
+training on that is not a trade worth making.
+
+Anything OpenAI-compatible can be added without waiting for code:
+
+```bash
+bash scripts/setkey.sh CUSTOM_API_KEY yourkey
+bash scripts/setkey.sh CUSTOM_BASE_URL https://api.example.com/v1
+bash scripts/setkey.sh CUSTOM_MODEL their-model-name
+docker compose up -d && docker compose exec jarvis python -m jarvis.benchmark
+```
+
+All three are required — the slot has no defaults, so a partial one is ignored
+rather than building an endpoint that fails on every request.
+
 ## A valid key is not a usable endpoint
 
 Providers advertise free tiers that their API then declines to serve. Cerebras

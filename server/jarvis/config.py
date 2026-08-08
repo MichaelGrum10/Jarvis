@@ -136,6 +136,27 @@ class Settings(BaseSettings):
     mistral_api_key: str = ""
     mistral_base_url: str = "https://api.mistral.ai/v1"
     mistral_model: str = "mistral-large-latest"
+
+    # NVIDIA's hosted catalogue. Free credits on signup, OpenAI-compatible, and
+    # carries frontier open models. build.nvidia.com issues the key.
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_model: str = "meta/llama-3.3-70b-instruct"
+
+    # Hugging Face's inference router, which fronts several providers behind one
+    # OpenAI-compatible endpoint. A free account gets a monthly allowance.
+    huggingface_api_key: str = ""
+    huggingface_base_url: str = "https://router.huggingface.co/v1"
+    huggingface_model: str = "meta-llama/Llama-3.3-70B-Instruct"
+
+    # Anything else OpenAI-compatible, without waiting for it to be added here.
+    # Free tiers appear, change and close faster than any hardcoded list keeps
+    # up — four of the defaults in this file went stale during one afternoon —
+    # so there is a slot that needs no code change. Set all three and it joins
+    # the pool like any other provider.
+    custom_api_key: str = ""
+    custom_base_url: str = ""
+    custom_model: str = ""
     # How long a request may wait for a cooling endpoint rather than failing.
     # An error saying "try again in 15s" is worse than waiting 15s, so these are
     # generous — but they are settings rather than constants so the test suite

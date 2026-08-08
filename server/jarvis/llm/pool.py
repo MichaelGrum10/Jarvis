@@ -272,7 +272,16 @@ def _extra_providers(settings) -> list[Endpoint]:
         (settings.github_models_api_key, settings.github_models_base_url,
          settings.github_models_model, "github"),
         (settings.mistral_api_key, settings.mistral_base_url, settings.mistral_model, "mistral"),
+        (settings.nvidia_api_key, settings.nvidia_base_url, settings.nvidia_model, "nvidia"),
+        (settings.huggingface_api_key, settings.huggingface_base_url,
+         settings.huggingface_model, "huggingface"),
+        (settings.custom_api_key, settings.custom_base_url, settings.custom_model, "custom"),
     ):
+        # The custom slot is the only one that can be half-filled, since it has
+        # no defaults to fall back on. A key with no URL would otherwise build an
+        # endpoint that fails on every request with a confusing error.
+        if not base_url or not model:
+            continue
         for index, key in enumerate(split_keys(key_raw)):
             suffix = f" #{index + 1}" if index else ""
             out.append(
