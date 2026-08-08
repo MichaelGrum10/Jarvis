@@ -106,7 +106,13 @@ class Settings(BaseSettings):
     # slots into the same pool with no special handling.
     gemini_api_key: str = ""
     gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
-    gemini_model: str = "gemini-2.0-flash"
+    # gemini-2.0-flash was the previous default and now returns 429 "exceeded your
+    # current quota" on a fresh free key — the model still exists, it simply
+    # carries no free allowance any more, which reads as rate limiting rather
+    # than as the wrong model. Google's free tier lives on the current Flash
+    # generation. `python -m jarvis.benchmark` prints what your key can actually
+    # reach, and that list beats this default whenever they disagree.
+    gemini_model: str = "gemini-2.5-flash"
 
     # GitHub Models — free for GitHub accounts, and the way to reach frontier
     # models (GPT-class) without paying. Rate limits are tight, so it earns its

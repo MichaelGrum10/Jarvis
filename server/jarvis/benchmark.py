@@ -261,6 +261,16 @@ def verdict(row: dict) -> str:
         # people debugging their network instead of their config.
         if "401" in error or "403" in error:
             return f"{RED}key rejected{RESET}"
+        if "402" in error:
+            return f"{RED}needs a paid plan{RESET}"
+        if "429" in error:
+            # A 429 on a benchmark's first call is not a busy minute — nothing
+            # has been spent yet. On these providers it means this model carries
+            # no free allowance, which is a model choice to change, not a wait.
+            lowered = error.lower()
+            if "quota" in lowered or "billing" in lowered or "plan" in lowered:
+                return f"{RED}no free quota for this model{RESET}"
+            return f"{YELLOW}rate limited right now{RESET}"
         if "404" in error:
             return f"{RED}model not available{RESET}"
         if "400" in error:

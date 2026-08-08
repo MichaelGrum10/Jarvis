@@ -247,3 +247,21 @@ def test_a_missing_model_names_its_own_providers_setting():
         at("https://generativelanguage.googleapis.com/v1beta/openai")
     ) == "GEMINI_MODEL"
     assert _setting_for(at("https://models.inference.ai.azure.com")) == "GITHUB_MODELS_MODEL"
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        ("HTTP 402: Payment required to access this resource", "needs a paid plan"),
+        ("HTTP 429: You exceeded your current quota, check your plan and billing",
+         "no free quota for this model"),
+        ("HTTP 429: Rate limit reached, please try again", "rate limited right now"),
+        ("HTTP 401: Wrong API Key", "key rejected"),
+    ],
+)
+def test_each_refusal_is_named_for_what_it_actually_is(error, expected):
+    """"Unreachable" for a billing wall or a model with no free allowance sends
+    people debugging their network instead of their config."""
+    from jarvis.benchmark import verdict
+
+    assert expected in verdict({"reachable": False, "error": error})
