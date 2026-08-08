@@ -785,3 +785,90 @@ def test_ordinary_messages_pass_through_untouched():
     ]
 
     assert messages_for(history, GROQ) == history
+
+
+def _two_provider(**over):
+    client = GroqClient(settings(**over))
+    client.pool = Pool([
+        Endpoint(model="groqm", api_key="k", base_url=GROQ, label="groq:groqm"),
+        Endpoint(model="gemm", api_key="k", base_url=GEMINI_URL, label="gemini:gemm"),
+    ])
+    return client
+
+
+SIGNATURE_ERROR = (
+    "Function call is missing a thought_signature in functionCall parts. "
+    "This is required for this model."
+)
+
+
+def test_a_started_tool_call_continues_on_the_provider_that_started_it():
+    """Gemini refuses to continue a tool call it did not sign, so failing over
+    mid-conversation breaks a conversation where nothing is actually wrong."""
+    client = _two_provider()
+    history = [
+        {"role": "user", "content": "what's on today"},
+        {"role": "assistant", "tool_calls": [{"id": "c1"}], "_origin": GEMINI_URL},
+        {"role": "tool", "tool_call_id": "c1", "content": "[]"},
+    ]
+
+    order = [e.label for e in client._candidates(None, history)]
+
+    assert order[0] == "gemini:gemm", "the follow-up belongs to whoever made the call"
+
+
+def test_ordering_is_untouched_when_no_tool_call_is_in_flight():
+    client = _two_provider()
+    plain = [{"role": "user", "content": "hello"}]
+
+    assert [e.label for e in client._candidates(None, plain)] == ["groq:groqm", "gemini:gemm"]
+
+
+async def test_declining_a_history_neither_rests_nor_retires_the_endpoint():
+    """The endpoint is healthy — it just cannot pick up someone else's tool
+    call. Resting it would remove a working provider over a conversation."""
+    client = _two_provider()
+    try:
+        with respx.mock:
+            respx.post(f"{GEMINI_URL}/chat/completions").mock(
+                return_value=httpx.Response(400, json=error_body(SIGNATURE_ERROR))
+            )
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(200, json=ok_body("groq finished it"))
+            )
+            history = [
+                {"role": "assistant", "tool_calls": [{"id": "c1"}], "_origin": GEMINI_URL},
+                {"role": "tool", "tool_call_id": "c1", "content": "[]"},
+            ]
+            response = await client.complete(history, tools=[{"type": "function"}])
+
+        assert response.content == "groq finished it"
+        gemini = client.pool.endpoints[1]
+        assert not gemini.retired
+        assert gemini.available, "a healthy endpoint must stay in rotation"
+    finally:
+        await client.aclose()
+
+
+async def test_a_declined_history_is_not_called_misconfigured():
+    """It sent people to the benchmark, which passes, for a fault that is not
+    theirs to fix."""
+    client = _two_provider()
+    try:
+        with respx.mock:
+            respx.post(f"{GEMINI_URL}/chat/completions").mock(
+                return_value=httpx.Response(400, json=error_body(SIGNATURE_ERROR))
+            )
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(429, json=error_body("rate limited"))
+            )
+            with pytest.raises(LLMError) as caught:
+                await client.complete(
+                    [{"role": "assistant", "tool_calls": [{"id": "c1"}], "_origin": GEMINI_URL}],
+                    tools=[{"type": "function"}],
+                )
+
+        assert "misconfigured" not in str(caught.value)
+        assert "cannot continue" in str(caught.value)
+    finally:
+        await client.aclose()

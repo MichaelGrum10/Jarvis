@@ -103,6 +103,14 @@ class LLMResponse:
 _STANDARD_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "refusal"})
 
 
+def _tool_call_origin(messages: list[dict]) -> str:
+    """Which provider issued the most recent unanswered tool call, if any."""
+    for message in reversed(messages):
+        if message.get("role") == "assistant" and message.get("tool_calls"):
+            return message.get("_origin", "")
+    return ""
+
+
 def messages_for(messages: list[dict], base_url: str) -> list[dict]:
     """Prepare the history for one specific provider.
 
@@ -155,6 +163,18 @@ class _BadToolCall(Exception):
 
 
 class _Upstream(Exception):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+class _IncompatibleHistory(Exception):
+    """This provider cannot continue this particular conversation.
+
+    Nothing is wrong with the endpoint, so it must not be rested or retired —
+    it just cannot pick up a tool call another provider started.
+    """
+
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(detail)
@@ -213,7 +233,7 @@ class GroqClient:
 
         # An explicit model request bypasses the ladder but still uses the pool's
         # keys, so a caller asking for a specific model keeps the failover.
-        candidates = self._candidates(model)
+        candidates = self._candidates(model, messages)
 
         # Everything is resting. Failing instantly here was wrong: a rate-limit
         # cooldown is usually seconds, and "no endpoint could answer" for a pool
@@ -222,7 +242,7 @@ class GroqClient:
         # a minute of silence is worse than a clear message.
         if not candidates:
             if await self._wait_for_capacity():
-                candidates = self._candidates(model)
+                candidates = self._candidates(model, messages)
 
         errors: list[str] = []
         nudged = False
@@ -286,6 +306,14 @@ class GroqClient:
                     except Exception:
                         endpoint.rest()
 
+            except _IncompatibleHistory as exc:
+                # Neither rested nor retired: the endpoint is healthy and will be
+                # first choice again on the next turn. Resting it here would take
+                # a working provider out of rotation for a fault that belongs to
+                # this conversation alone.
+                errors.append(f"{endpoint.label}: cannot continue another provider's tool call")
+                log.info("%s declined this history: %s", endpoint.label, exc.detail[:160])
+
             except _BadCredentials as exc:
                 endpoint.retire(exc.reason)
                 errors.append(f"{endpoint.label}: {exc.reason}")
@@ -320,11 +348,21 @@ class GroqClient:
         await asyncio.sleep(wait + 0.1)
         return True
 
-    def _candidates(self, model: str | None) -> list[Endpoint]:
+    def _candidates(self, model: str | None, messages: list[dict] | None = None) -> list[Endpoint]:
         ready = self.pool.ready()
         if model:
             preferred = [e for e in ready if e.model == model]
             return preferred + [e for e in ready if e.model != model]
+
+        # Continue a started tool call on the provider that started it. Gemini
+        # signs its tool calls and refuses to continue one it did not sign, so a
+        # mid-conversation failover — Groq calls the tool, Gemini is asked for
+        # the follow-up — fails on a conversation where nothing is wrong. The
+        # others do not care, so this only ever reorders.
+        origin = _tool_call_origin(messages or [])
+        if origin:
+            home = [e for e in ready if e.base_url == origin]
+            return home + [e for e in ready if e.base_url != origin]
         return ready
 
     def _exhausted_message(self, errors: list[str]) -> str:
@@ -357,7 +395,9 @@ class GroqClient:
         retired_labels = tuple(e.label for e in retired)
         broken = [
             e for e in errors
-            if "rate limited" not in e and not e.startswith(retired_labels)
+            if "rate limited" not in e
+            and "cannot continue" not in e
+            and not e.startswith(retired_labels)
         ]
 
         parts: list[str] = []
@@ -375,6 +415,13 @@ class GroqClient:
             lines.append(
                 "These look misconfigured rather than busy, and won't recover on their "
                 f"own: {'; '.join(broken[:3])}."
+            )
+        declined = [e for e in errors if "cannot continue" in e]
+        if declined:
+            lines.append(
+                "Skipped for this conversation only, and fine for the next one: "
+                + "; ".join(declined[:3])
+                + "."
             )
         if retired:
             lines.append(
@@ -466,6 +513,11 @@ class GroqClient:
         if response.status_code == 400:
             message = _error_message(response)
             lowered = message.lower()
+            # Not a malformed call — a provider declining to continue someone
+            # else's. Gemini names its own field; the phrasing is distinctive
+            # enough to match without catching genuine tool-call errors.
+            if "thought_signature" in lowered or "signature in functioncall" in lowered:
+                raise _IncompatibleHistory(message)
             if "tool" in lowered and ("not in request.tools" in lowered or "validation" in lowered):
                 raise _BadToolCall(message)
             # Some providers signal an oversized request as 400 rather than 413.
