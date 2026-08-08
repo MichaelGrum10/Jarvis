@@ -31,6 +31,12 @@ log = logging.getLogger(__name__)
 # the point where a user assumes the app has hung.
 MAX_WAIT_SECONDS = 20.0
 
+# The ceiling for retrying automatically after a whole pass has already failed.
+# Tighter than the one above, because that wait happens before any work and this
+# one happens after a round of requests has already cost time. Past this, the
+# error is more use than a longer silence.
+RETRY_WAIT_SECONDS = 8.0
+
 
 class LLMError(RuntimeError):
     pass
@@ -109,6 +115,52 @@ def _tool_call_origin(messages: list[dict]) -> str:
         if message.get("role") == "assistant" and message.get("tool_calls"):
             return message.get("_origin", "")
     return ""
+
+
+def flatten_tool_exchange(messages: list[dict]) -> list[dict]:
+    """Rewrite a tool call and its results as ordinary conversation.
+
+    The formal protocol — an assistant message carrying tool_calls, then tool
+    messages answering them — is what one provider can refuse to continue from
+    another. Restated as plain text, any model can pick the turn up, at the cost
+    of the structure. Used only as a fallback, because the structured form is
+    better when it works: the model sees the arguments it chose and can call
+    again cleanly.
+
+    Without this, a turn whose first step went to Groq is stranded the moment
+    Groq hits its per-minute limit, even with a perfectly healthy second
+    provider sitting idle.
+    """
+    flattened: list[dict] = []
+    pending: dict[str, str] = {}
+
+    for message in messages:
+        role = message.get("role")
+        if role == "assistant" and message.get("tool_calls"):
+            names = []
+            for call in message["tool_calls"]:
+                fn = call.get("function", {})
+                name = fn.get("name", "a tool")
+                names.append(name)
+                pending[call.get("id", "")] = name
+            said = (message.get("content") or "").strip()
+            flattened.append({
+                "role": "assistant",
+                "content": (said + " " if said else "") + f"[Called: {', '.join(names)}]",
+            })
+        elif role == "tool":
+            name = message.get("name") or pending.get(message.get("tool_call_id", ""), "tool")
+            flattened.append({
+                "role": "user",
+                "content": (
+                    f"Result from {name}:\n{message.get('content', '')}\n\n"
+                    "Use this to answer. Call another tool if you still need one."
+                ),
+            })
+        else:
+            flattened.append(message)
+
+    return flattened
 
 
 def messages_for(messages: list[dict], base_url: str) -> list[dict]:
@@ -225,7 +277,9 @@ class GroqClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         force_json: bool = False,
+        _retried_after_wait: bool = False,
     ) -> LLMResponse:
+        retried_after_wait = _retried_after_wait
         if not len(self.pool):
             raise LLMError(
                 "No LLM endpoints configured. Set GROQ_API_KEY (or GROQ_API_KEYS) in .env."
@@ -307,12 +361,24 @@ class GroqClient:
                         endpoint.rest()
 
             except _IncompatibleHistory as exc:
-                # Neither rested nor retired: the endpoint is healthy and will be
-                # first choice again on the next turn. Resting it here would take
-                # a working provider out of rotation for a fault that belongs to
-                # this conversation alone.
-                errors.append(f"{endpoint.label}: cannot continue another provider's tool call")
+                # Retry the same endpoint with the exchange restated as plain
+                # text. Refusing to continue another provider's tool call is
+                # about the protocol, not the content — so a healthy backup can
+                # still finish the turn, which is the entire point of having one.
                 log.info("%s declined this history: %s", endpoint.label, exc.detail[:160])
+                flat = flatten_tool_exchange(messages)
+                if flat != messages:
+                    try:
+                        response = await self._request(
+                            endpoint, flat, tools, temperature, max_tokens, force_json
+                        )
+                        endpoint.succeeded()
+                        return response
+                    except Exception:
+                        log.info("%s also declined the flattened history", endpoint.label)
+                # Neither rested nor retired: the endpoint is healthy and will be
+                # first choice again on the next turn.
+                errors.append(f"{endpoint.label}: cannot continue another provider's tool call")
 
             except _BadCredentials as exc:
                 endpoint.retire(exc.reason)
@@ -324,9 +390,21 @@ class GroqClient:
                 errors.append(f"{endpoint.label}: {exc.detail[:80]}")
                 log.warning("Upstream error on %s: %s", endpoint.label, exc.detail[:200])
 
+        # Everything failed, but a rate limit is a wait rather than a fault. If
+        # capacity is seconds away, take it: telling someone to "try again in
+        # about 4s" is asking them to do by hand what this can do itself. One
+        # extra pass only — a second failure means something other than timing.
+        if any("rate limited" in e for e in errors) and not retried_after_wait:
+            if await self._wait_for_capacity(RETRY_WAIT_SECONDS):
+                return await self.complete(
+                    messages, tools, model=model, temperature=temperature,
+                    max_tokens=max_tokens, force_json=force_json,
+                    _retried_after_wait=True,
+                )
+
         raise LLMError(self._exhausted_message(errors))
 
-    async def _wait_for_capacity(self) -> bool:
+    async def _wait_for_capacity(self, ceiling: float = MAX_WAIT_SECONDS) -> bool:
         """Pause for a cooling endpoint, if one is coming back soon enough.
 
         The ceiling matters in both directions. Too low and a four-second
@@ -341,7 +419,7 @@ class GroqClient:
         wait = soonest.seconds_until_available
         if wait <= 0:
             return True
-        if wait > MAX_WAIT_SECONDS:
+        if wait > ceiling:
             return False
 
         log.info("All endpoints cooling; waiting %.1fs for %s", wait, soonest.label)

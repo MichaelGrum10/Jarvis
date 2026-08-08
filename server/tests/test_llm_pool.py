@@ -872,3 +872,63 @@ async def test_a_declined_history_is_not_called_misconfigured():
         assert "cannot continue" in str(caught.value)
     finally:
         await client.aclose()
+
+
+def test_flattening_lets_any_provider_pick_up_a_tool_call():
+    """The stranding case: Groq calls a tool, then hits its per-minute limit,
+    and Gemini won't continue Groq's call. Restated as plain text, it can."""
+    from jarvis.llm.client import flatten_tool_exchange
+
+    flat = flatten_tool_exchange([
+        {"role": "user", "content": "what's on today"},
+        {"role": "assistant", "content": None, "_origin": GROQ, "tool_calls": [
+            {"id": "c1", "type": "function",
+             "function": {"name": "calendar_list", "arguments": "{}"}}]},
+        {"role": "tool", "tool_call_id": "c1", "name": "calendar_list",
+         "content": '[{"summary": "Dentist"}]'},
+    ])
+
+    assert not any(m.get("tool_calls") for m in flat), "no structure left to refuse"
+    assert not any(m.get("role") == "tool" for m in flat)
+    assert "calendar_list" in flat[1]["content"]
+    assert "Dentist" in flat[2]["content"], "the results must survive the rewrite"
+    assert flat[0] == {"role": "user", "content": "what's on today"}
+
+
+def test_flattening_leaves_a_plain_conversation_alone():
+    from jarvis.llm.client import flatten_tool_exchange
+
+    plain = [{"role": "user", "content": "hello"}, {"role": "assistant", "content": "hi"}]
+
+    assert flatten_tool_exchange(plain) == plain
+
+
+async def test_a_stranded_turn_is_finished_by_the_other_provider():
+    """End to end: Groq is rate limited, Gemini declines the structured history,
+    and the flattened retry gets an answer instead of an error."""
+    client = _two_provider()
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(429, json=error_body("rate limited"))
+            )
+            respx.post(f"{GEMINI_URL}/chat/completions").mock(
+                side_effect=[
+                    httpx.Response(400, json=error_body(SIGNATURE_ERROR)),
+                    httpx.Response(200, json=ok_body("Nothing on today.")),
+                ]
+            )
+            response = await client.complete(
+                [
+                    {"role": "assistant", "content": None, "_origin": GROQ, "tool_calls": [
+                        {"id": "c1", "type": "function",
+                         "function": {"name": "calendar_list", "arguments": "{}"}}]},
+                    {"role": "tool", "tool_call_id": "c1", "name": "calendar_list",
+                     "content": "[]"},
+                ],
+                tools=[{"type": "function"}],
+            )
+
+        assert response.content == "Nothing on today."
+    finally:
+        await client.aclose()
