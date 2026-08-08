@@ -324,3 +324,29 @@ def test_the_key_setting_is_derived_from_the_model_setting():
 
     assert _key_setting_for(groq) == "GROQ_API_KEY"
     assert _key_setting_for(gemini) == "GEMINI_API_KEY"
+
+
+def test_a_base_url_setting_is_derivable_for_every_provider():
+    """The 404-with-no-catalogue advice names a _BASE_URL setting; it has to be
+    the real one, or the remedy sends people to a setting that does not exist."""
+    from jarvis.benchmark import _base_url_setting_for, _key_setting_for, _setting_for
+    from jarvis.config import Settings
+    from jarvis.llm.pool import Endpoint
+
+    fields = set(Settings.model_fields)
+    for url in (
+        "https://api.groq.com/openai/v1",
+        "https://api.cerebras.ai/v1",
+        "https://generativelanguage.googleapis.com/v1beta/openai",
+        "https://models.github.ai/inference",
+        "https://api.mistral.ai/v1",
+        "https://openrouter.ai/api/v1",
+        "https://api.together.xyz/v1",
+    ):
+        endpoint = Endpoint(model="m", api_key="k", base_url=url)
+        for setting in (
+            _key_setting_for(endpoint),
+            _base_url_setting_for(endpoint),
+            _setting_for(endpoint),
+        ):
+            assert setting.lower() in fields, f"{setting} is not a real setting"

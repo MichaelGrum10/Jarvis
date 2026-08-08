@@ -294,16 +294,24 @@ def verdict(row: dict) -> str:
 # Matched on the base URL rather than the label: a label is only reliably a
 # provider name when build_pool set it, and the fallback one is derived from the
 # hostname's first component — "api" for most of these.
-_PROVIDER_BY_HOST = (
-    ("api.groq.com", "GROQ_MODEL_LADDER"),
-    ("api.cerebras.ai", "CEREBRAS_MODEL"),
-    ("openrouter.ai", "OPENROUTER_MODEL"),
-    ("api.together.xyz", "TOGETHER_MODEL"),
-    ("generativelanguage.googleapis.com", "GEMINI_MODEL"),
-    ("models.inference.ai.azure.com", "GITHUB_MODELS_MODEL"),
-    ("models.github.ai", "GITHUB_MODELS_MODEL"),
-    ("api.mistral.ai", "MISTRAL_MODEL"),
+_PREFIX_BY_HOST = (
+    ("api.groq.com", "GROQ"),
+    ("api.cerebras.ai", "CEREBRAS"),
+    ("openrouter.ai", "OPENROUTER"),
+    ("api.together.xyz", "TOGETHER"),
+    ("generativelanguage.googleapis.com", "GEMINI"),
+    ("models.inference.ai.azure.com", "GITHUB_MODELS"),
+    ("models.github.ai", "GITHUB_MODELS"),
+    ("api.mistral.ai", "MISTRAL"),
 )
+
+
+def _prefix_for(endpoint) -> str:
+    """The settings prefix for this endpoint's provider."""
+    for host, prefix in _PREFIX_BY_HOST:
+        if host in endpoint.base_url:
+            return prefix
+    return endpoint.label.split(":", 1)[0].upper()
 
 
 def _setting_for(endpoint) -> str:
@@ -313,10 +321,9 @@ def _setting_for(endpoint) -> str:
     because a *Cerebras* model was retired sends them to a setting that has
     nothing to do with the failure, and leaves the one they need unmentioned.
     """
-    for host, setting in _PROVIDER_BY_HOST:
-        if host in endpoint.base_url:
-            return setting
-    return f"{endpoint.label.split(':', 1)[0].upper()}_MODEL"
+    prefix = _prefix_for(endpoint)
+    # Groq is the only provider configured with a ladder rather than one model.
+    return "GROQ_MODEL_LADDER" if prefix == "GROQ" else f"{prefix}_MODEL"
 
 
 # Preferred first. A provider's catalogue is mostly noise for this purpose —
@@ -394,10 +401,17 @@ async def find_working_model(
 
 
 def _key_setting_for(endpoint) -> str:
-    """The API-key setting for this provider, given its model setting."""
-    return _setting_for(endpoint).replace("_MODEL_LADDER", "_API_KEY").replace(
-        "_MODEL", "_API_KEY"
-    )
+    """The API-key setting for this provider.
+
+    Built from the prefix rather than by rewriting the model setting's name:
+    GITHUB_MODELS_MODEL contains "_MODEL" twice, so substitution turned it into
+    GITHUB_API_KEYS_API_KEY — a setting that has never existed.
+    """
+    return f"{_prefix_for(endpoint)}_API_KEY"
+
+
+def _base_url_setting_for(endpoint) -> str:
+    return f"{_prefix_for(endpoint)}_BASE_URL"
 
 
 async def available_models(client: httpx.AsyncClient, pool) -> dict[str, set[str]]:
@@ -524,6 +538,21 @@ async def main() -> int:
         for endpoint, row in repairable:
             models = catalogue.get(endpoint.base_url)
             if not models:
+                # No catalogue and a 404 is not a model problem: the address is
+                # wrong, and hunting for a better model name cannot help. Saying
+                # so beats the silence this produced before.
+                print(f"{DIM}{endpoint.label}:{RESET}")
+                print(f"  {RED}✗ couldn't list this provider's models either.{RESET}")
+                if "404" in str(row.get("error", "")):
+                    host = endpoint.base_url.split("//")[-1].split("/")[0]
+                    print(f"    {DIM}A 404 with no catalogue usually means the base URL "
+                          f"is wrong rather than the model.{RESET}")
+                    print(f"    {DIM}Currently {host}. Check the provider's current "
+                          f"endpoint, then:{RESET}")
+                    print(f"    {DIM}bash scripts/setkey.sh "
+                          f"{_base_url_setting_for(endpoint)} https://...{RESET}")
+                else:
+                    print(f"    {DIM}Usually a rejected key.{RESET}")
                 continue
             print(f"{DIM}{endpoint.label}:{RESET}")
             async with httpx.AsyncClient() as repair_client:

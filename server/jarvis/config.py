@@ -122,8 +122,14 @@ class Settings(BaseSettings):
     # models (GPT-class) without paying. Rate limits are tight, so it earns its
     # place as a last resort for hard questions rather than the everyday default.
     github_models_api_key: str = ""
-    github_models_base_url: str = "https://models.inference.ai.azure.com"
-    github_models_model: str = "gpt-4o-mini"
+    # models.inference.ai.azure.com was the original host and now answers 404
+    # with an empty body — which reads as "model not available" rather than
+    # "wrong address", so it points at the model name instead of the URL. The
+    # current endpoint is models.github.ai, where model ids carry a publisher
+    # prefix. Unverified on any account here: `python -m jarvis.benchmark` is
+    # what will say whether it works for you.
+    github_models_base_url: str = "https://models.github.ai/inference"
+    github_models_model: str = "openai/gpt-4o-mini"
 
     mistral_api_key: str = ""
     mistral_base_url: str = "https://api.mistral.ai/v1"
