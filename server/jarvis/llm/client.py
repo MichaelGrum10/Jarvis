@@ -22,7 +22,7 @@ from typing import Any
 import httpx
 
 from ..config import Settings, get_settings
-from .pool import Endpoint, Pool, build_pool
+from .pool import Endpoint, Pool, build_pool, model_setting
 
 log = logging.getLogger(__name__)
 
@@ -531,11 +531,23 @@ class GroqClient:
                 + "."
             )
         if retired:
+            # Each provider has its own setting, and naming Groq's for an
+            # OpenRouter model sends the user to something unrelated. A missing
+            # model is also the one case the benchmark can fix by itself, so
+            # point at that rather than at manual editing.
+            fixable = [e for e in retired if "does not exist" in e.retired]
             lines.append(
                 "Permanently out of rotation: "
                 + "; ".join(f"{e.label} ({e.retired})" for e in retired[:3])
-                + ". Remove them from your model ladder in .env."
+                + "."
             )
+            if fixable:
+                names = ", ".join(sorted({model_setting(e) for e in fixable}))
+                lines.append(
+                    f"Run the benchmark to find a working model and set {names}."
+                )
+            else:
+                lines.append("Clear their keys in .env, or they cost an attempt each turn.")
         # The wait hint belongs on any outcome where something is coming back,
         # not only on a rate limit. With nothing tried at all — every endpoint
         # already cooling when the request arrived — it is the only actionable

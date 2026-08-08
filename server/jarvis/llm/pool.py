@@ -175,6 +175,43 @@ class Pool:
         ]
 
 
+# Matched on the base URL rather than the label: a label is only reliably a
+# provider name when build_pool set it, and the fallback is the hostname's first
+# component — "api" for nearly all of these.
+_PREFIX_BY_HOST = (
+    ("api.groq.com", "GROQ"),
+    ("api.cerebras.ai", "CEREBRAS"),
+    ("openrouter.ai", "OPENROUTER"),
+    ("api.together.xyz", "TOGETHER"),
+    ("generativelanguage.googleapis.com", "GEMINI"),
+    ("models.inference.ai.azure.com", "GITHUB_MODELS"),
+    ("models.github.ai", "GITHUB_MODELS"),
+    ("api.mistral.ai", "MISTRAL"),
+    ("integrate.api.nvidia.com", "NVIDIA"),
+    ("router.huggingface.co", "HUGGINGFACE"),
+)
+
+
+def provider_prefix(endpoint) -> str:
+    """The .env settings prefix for this endpoint's provider."""
+    for host, prefix in _PREFIX_BY_HOST:
+        if host in endpoint.base_url:
+            return prefix
+    return endpoint.label.split(":", 1)[0].upper()
+
+
+def model_setting(endpoint) -> str:
+    """The setting that chooses this endpoint's model.
+
+    Lives here rather than in the benchmark because the client needs it too:
+    telling someone to edit GROQ_MODEL_LADDER when an *OpenRouter* model is
+    missing names a setting that has nothing to do with the failure.
+    """
+    prefix = provider_prefix(endpoint)
+    # Groq is the only provider configured with a ladder rather than one model.
+    return "GROQ_MODEL_LADDER" if prefix == "GROQ" else f"{prefix}_MODEL"
+
+
 def split_keys(raw: str) -> list[str]:
     """Parse a comma/whitespace separated key list, preserving order."""
     if not raw:

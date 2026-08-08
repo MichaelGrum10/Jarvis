@@ -32,7 +32,7 @@ import httpx
 
 from .config import get_settings
 from .llm.client import error_payload, normalise_model_id
-from .llm.pool import build_pool
+from .llm.pool import build_pool, model_setting, provider_prefix
 
 GREEN, RED, YELLOW, DIM, BOLD, RESET = (
     "\033[32m", "\033[31m", "\033[33m", "\033[2m", "\033[1m", "\033[0m"
@@ -295,41 +295,16 @@ def verdict(row: dict) -> str:
     return f"{YELLOW}usable but slow{RESET}"
 
 
-# Matched on the base URL rather than the label: a label is only reliably a
-# provider name when build_pool set it, and the fallback one is derived from the
-# hostname's first component — "api" for most of these.
-_PREFIX_BY_HOST = (
-    ("api.groq.com", "GROQ"),
-    ("api.cerebras.ai", "CEREBRAS"),
-    ("openrouter.ai", "OPENROUTER"),
-    ("api.together.xyz", "TOGETHER"),
-    ("generativelanguage.googleapis.com", "GEMINI"),
-    ("models.inference.ai.azure.com", "GITHUB_MODELS"),
-    ("models.github.ai", "GITHUB_MODELS"),
-    ("api.mistral.ai", "MISTRAL"),
-    ("integrate.api.nvidia.com", "NVIDIA"),
-    ("router.huggingface.co", "HUGGINGFACE"),
-)
-
-
-def _prefix_for(endpoint) -> str:
-    """The settings prefix for this endpoint's provider."""
-    for host, prefix in _PREFIX_BY_HOST:
-        if host in endpoint.base_url:
-            return prefix
-    return endpoint.label.split(":", 1)[0].upper()
-
-
 def _setting_for(endpoint) -> str:
-    """Which .env setting controls this endpoint's model.
+    return model_setting(endpoint)
 
-    Naming the right provider matters: telling someone to edit GROQ_MODEL_LADDER
-    because a *Cerebras* model was retired sends them to a setting that has
-    nothing to do with the failure, and leaves the one they need unmentioned.
-    """
-    prefix = _prefix_for(endpoint)
-    # Groq is the only provider configured with a ladder rather than one model.
-    return "GROQ_MODEL_LADDER" if prefix == "GROQ" else f"{prefix}_MODEL"
+
+def _key_setting_for(endpoint) -> str:
+    return f"{provider_prefix(endpoint)}_API_KEY"
+
+
+def _base_url_setting_for(endpoint) -> str:
+    return f"{provider_prefix(endpoint)}_BASE_URL"
 
 
 # Preferred first. A provider's catalogue is mostly noise for this purpose —
@@ -424,20 +399,6 @@ async def find_working_model(
             return model, f"{result['seconds']:.2f}s, tool call correct"
         print(f"{DIM}    answered but {why}{RESET}")
     return None
-
-
-def _key_setting_for(endpoint) -> str:
-    """The API-key setting for this provider.
-
-    Built from the prefix rather than by rewriting the model setting's name:
-    GITHUB_MODELS_MODEL contains "_MODEL" twice, so substitution turned it into
-    GITHUB_API_KEYS_API_KEY — a setting that has never existed.
-    """
-    return f"{_prefix_for(endpoint)}_API_KEY"
-
-
-def _base_url_setting_for(endpoint) -> str:
-    return f"{_prefix_for(endpoint)}_BASE_URL"
 
 
 async def available_models(client: httpx.AsyncClient, pool) -> dict[str, set[str]]:

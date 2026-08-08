@@ -1051,3 +1051,32 @@ def test_new_providers_are_reachable_from_settings():
     labels = {e.label.split(":", 1)[0] for e in pool.endpoints}
 
     assert {"nvidia", "huggingface"} <= labels
+
+
+def test_a_retired_model_names_its_own_providers_setting():
+    """"Remove them from your model ladder" is Groq's setting. Saying it about
+    an OpenRouter model sends the user somewhere unrelated."""
+    client = GroqClient(settings())
+    client.pool = Pool([
+        Endpoint(model="m", api_key="k", base_url="https://openrouter.ai/api/v1",
+                 label="openrouter:m"),
+        Endpoint(model="n", api_key="k", base_url=GROQ, label="groq:n"),
+    ])
+    client.pool.endpoints[0].retire("model does not exist on this provider")
+
+    message = client._exhausted_message(["openrouter:m: model does not exist on this provider"])
+
+    assert "OPENROUTER_MODEL" in message
+    assert "GROQ_MODEL_LADDER" not in message
+    assert "benchmark" in message, "a missing model is the case the search can fix"
+
+
+def test_a_rejected_key_is_not_sent_to_the_model_search():
+    """No model name fixes a bad key, so proposing a search would waste time."""
+    client = GroqClient(settings(groq_model_ladder="a"))
+    client.pool.endpoints[0].retire("key rejected")
+
+    message = client._exhausted_message(["groq:a: key rejected"])
+
+    assert "Clear their keys" in message
+    assert "benchmark to find a working model" not in message
