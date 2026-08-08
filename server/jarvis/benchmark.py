@@ -364,9 +364,14 @@ def _candidate_models(catalogue: set[str], exclude: str) -> list[str]:
     return sorted(usable, key=rank)
 
 
+def _is_quota_error(error: str) -> bool:
+    lowered = error.lower()
+    return "429" in error and ("quota" in lowered or "billing" in lowered or "plan" in lowered)
+
+
 async def find_working_model(
     client: httpx.AsyncClient, endpoint, catalogue: set[str], limit: int = 6
-) -> tuple[str, str] | None:
+) -> tuple[str | None, str]:
     """Try alternatives from the same provider until one answers a tool call.
 
     This exists because hardcoded model defaults go stale faster than anyone
@@ -374,12 +379,13 @@ async def find_working_model(
     presenting as a different kind of failure. The provider's own catalogue plus
     a real request is the only thing that stays true.
 
-    Returns (model, note) or None. Only the small tool test is used: it is one
-    request per candidate, and a model that cannot manage that will not manage a
-    full-size turn either.
+    Returns (model, note) on success, or (None, diagnosis). Only the small tool
+    test is used: it is one request per candidate, and a model that cannot manage
+    that will not manage a full-size turn either.
     """
     from .llm.pool import Endpoint
 
+    quota_hits = 0
     for model in _candidate_models(catalogue, endpoint.model)[:limit]:
         trial = Endpoint(
             model=model, api_key=endpoint.api_key, base_url=endpoint.base_url,
@@ -393,12 +399,19 @@ async def find_working_model(
         )
         if not result["ok"]:
             print(f"{DIM}    {result['error'][:80]}{RESET}")
+            if _is_quota_error(result["error"]):
+                quota_hits += 1
+                # Two different models refusing on quota is the account's
+                # allowance, not the models. Continuing spends more of an
+                # allowance that is already gone, to learn the same thing again.
+                if quota_hits >= 2:
+                    return None, "quota"
             continue
         ok, why = tool_call_correct(result)
         if ok:
             return model, f"{result['seconds']:.2f}s, tool call correct"
         print(f"{DIM}    answered but {why}{RESET}")
-    return None
+    return None, "quota" if quota_hits else "none"
 
 
 async def available_models(client: httpx.AsyncClient, pool) -> dict[str, set[str]]:
@@ -561,15 +574,23 @@ async def main() -> int:
             print(f"{DIM}{endpoint.label}:{RESET}")
             async with httpx.AsyncClient() as repair_client:
                 found = await find_working_model(repair_client, endpoint, models)
-            if found:
-                model, note = found
+            model, note = found
+            if model:
                 print(f"  {GREEN}✓ {model}{RESET} {DIM}({note}){RESET}")
                 print(f"    {BOLD}bash scripts/setkey.sh {_setting_for(endpoint)} {model}{RESET}")
                 row["replacement"] = model
+            elif note == "quota":
+                # Every model refusing on quota is today's allowance, not a dead
+                # provider. Telling someone to clear the key would throw away a
+                # working provider that recovers on its own.
+                print(f"  {YELLOW}! every model refused on quota — this account's free "
+                      f"allowance is spent.{RESET}")
+                print(f"    {DIM}It resets on the provider's own cycle, usually daily. "
+                      f"Leave the key in place.{RESET}")
             else:
                 key_setting = _key_setting_for(endpoint)
                 print(f"  {RED}✗ nothing on this provider answered a tool call.{RESET}")
-                print(f"    {DIM}Its free tier may be exhausted or closed.{RESET}")
+                print(f"    {DIM}Its free tier may be closed to new accounts.{RESET}")
                 print(f"    {DIM}Clear it: bash scripts/setkey.sh {key_setting} ''{RESET}")
 
     usable = [r for r in rows if r.get("tools_large")]

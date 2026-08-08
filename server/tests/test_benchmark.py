@@ -395,3 +395,49 @@ def test_openrouters_free_models_are_tried_before_its_paid_ones():
     assert order.index("openai/gpt-4o") > order.index(
         "meta-llama/llama-3.3-70b-instruct:free"
     )
+
+
+GEM = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def _quota_429():
+    return httpx.Response(429, json={"error": {
+        "message": "You exceeded your current quota, please check your plan and billing details"}})
+
+
+async def test_an_exhausted_account_stops_the_search_after_two_refusals():
+    """Six models all refusing on quota is the account's allowance, not the
+    models. Continuing spends more of an allowance that is already gone."""
+    from jarvis.benchmark import find_working_model
+    from jarvis.llm.pool import Endpoint
+
+    endpoint = Endpoint(model="models/gemini-3.6-flash", api_key="k", base_url=GEM,
+                        label="gemini:models/gemini-3.6-flash")
+    catalogue = {f"models/gemini-{v}-flash" for v in ("2.0", "2.5", "3.1", "3.5", "3.6")}
+
+    with respx.mock:
+        route = respx.post(f"{GEM}/chat/completions").mock(return_value=_quota_429())
+        async with httpx.AsyncClient() as client:
+            model, note = await find_working_model(client, endpoint, catalogue)
+
+    assert model is None
+    assert note == "quota"
+    assert route.call_count == 2, "it must stop rather than burn the whole catalogue"
+
+
+async def test_an_exhausted_provider_is_not_reported_as_dead():
+    """Telling someone to clear the key would discard a working provider that
+    recovers on its own cycle."""
+    from jarvis.benchmark import find_working_model
+    from jarvis.llm.pool import Endpoint
+
+    endpoint = Endpoint(model="a", api_key="k", base_url=GEM, label="gemini:a")
+
+    with respx.mock:
+        respx.post(f"{GEM}/chat/completions").mock(
+            return_value=httpx.Response(404, json={"error": {"message": "no such model"}})
+        )
+        async with httpx.AsyncClient() as client:
+            _, note = await find_working_model(client, endpoint, {"b", "c"})
+
+    assert note == "none", "a 404 is not an exhausted quota"
