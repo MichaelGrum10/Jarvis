@@ -265,3 +265,62 @@ def test_each_refusal_is_named_for_what_it_actually_is(error, expected):
     from jarvis.benchmark import verdict
 
     assert expected in verdict({"reachable": False, "error": error})
+
+
+def test_replacement_candidates_skip_models_that_cannot_do_the_job():
+    """A provider's catalogue is mostly noise here — transcription, embeddings,
+    and models too small to hold a 30-schema turn."""
+    from jarvis.benchmark import _candidate_models
+
+    catalogue = {
+        "whisper-large-v3", "text-embedding-3", "llama-guard-4",
+        "llama-3.1-8b-instant", "gpt-oss-120b", "gemini-2.5-flash", "current-model",
+    }
+
+    candidates = _candidate_models(catalogue, exclude="current-model")
+
+    assert "whisper-large-v3" not in candidates
+    assert "text-embedding-3" not in candidates
+    assert "llama-guard-4" not in candidates
+    assert "llama-3.1-8b-instant" not in candidates, "8b cannot hold a full-size turn"
+    assert "current-model" not in candidates, "the failing model is not its own replacement"
+    assert candidates[0] == "gpt-oss-120b", "measured-good models are tried first"
+    assert "gemini-2.5-flash" in candidates, (
+        "a substring test drops every Gemini model, because 'gemini' contains 'mini'"
+    )
+
+
+def test_gemini_survives_the_small_model_filter():
+    """The bug this replaces: filtering by substring discarded the entire Gemini
+    catalogue while trying to repair a Gemini endpoint, so the provider was
+    reported dead when every one of its models was fine."""
+    from jarvis.benchmark import _candidate_models
+
+    catalogue = {
+        "gemini-2.0-flash", "gemini-2.5-flash", "gemini-2.5-pro",
+        "gemini-2.5-flash-lite", "gpt-4o-mini", "text-embedding-004",
+    }
+
+    candidates = _candidate_models(catalogue, exclude="gemini-2.0-flash")
+
+    assert "gemini-2.5-flash" in candidates
+    assert "gemini-2.5-pro" in candidates
+    assert "gemini-2.5-flash-lite" not in candidates, "'lite' is a real token here"
+    assert "gpt-4o-mini" not in candidates, "'mini' is a real token here"
+    assert "text-embedding-004" not in candidates
+
+
+def test_the_key_setting_is_derived_from_the_model_setting():
+    """Groq's model setting is a ladder, so a naive suffix swap produces
+    GROQ_MODEL_LADDER_API_KEY."""
+    from jarvis.benchmark import _key_setting_for
+    from jarvis.llm.pool import Endpoint
+
+    groq = Endpoint(model="m", api_key="k", base_url="https://api.groq.com/openai/v1")
+    gemini = Endpoint(
+        model="m", api_key="k",
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+    )
+
+    assert _key_setting_for(groq) == "GROQ_API_KEY"
+    assert _key_setting_for(gemini) == "GEMINI_API_KEY"

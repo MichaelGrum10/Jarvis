@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 
 import httpx
@@ -318,6 +319,87 @@ def _setting_for(endpoint) -> str:
     return f"{endpoint.label.split(':', 1)[0].upper()}_MODEL"
 
 
+# Preferred first. A provider's catalogue is mostly noise for this purpose —
+# transcription, embeddings, image models, and small models that cannot hold a
+# 30-schema turn — so candidates are ordered by what has actually worked here
+# rather than tried alphabetically.
+_PROMISING = ("gpt-oss-120b", "flash", "70b", "qwen", "gpt-4o", "mistral-large", "glm")
+
+# Matched as whole tokens, never as substrings. "gemini" contains "mini", so a
+# substring test silently discards every Gemini model — including while trying
+# to repair a Gemini endpoint, where the whole list would come back empty and
+# the provider would be declared dead.
+_HOPELESS_TOKENS = frozenset({
+    "whisper", "tts", "guard", "embed", "embedding", "embeddings", "vision",
+    "image", "images", "audio", "speech", "rerank", "reranker", "moderation",
+    "nano", "mini", "lite", "small", "tiny",
+    # Too small to hold a full-size turn, whatever else they can do.
+    "1b", "2b", "3b", "4b", "7b", "8b", "9b",
+})
+
+
+def _tokens(model: str) -> set[str]:
+    return set(re.split(r"[^a-z0-9]+", model.lower())) - {""}
+
+
+def _candidate_models(catalogue: set[str], exclude: str) -> list[str]:
+    """Models worth trying as a replacement, best first."""
+    def rank(name: str) -> tuple[int, int]:
+        lowered = name.lower()
+        promise = next((i for i, p in enumerate(_PROMISING) if p in lowered), len(_PROMISING))
+        return promise, len(name)
+
+    usable = [
+        m for m in catalogue
+        if m != exclude and not (_tokens(m) & _HOPELESS_TOKENS)
+    ]
+    return sorted(usable, key=rank)
+
+
+async def find_working_model(
+    client: httpx.AsyncClient, endpoint, catalogue: set[str], limit: int = 6
+) -> tuple[str, str] | None:
+    """Try alternatives from the same provider until one answers a tool call.
+
+    This exists because hardcoded model defaults go stale faster than anyone
+    updates them — three of them expired during a single afternoon's setup, each
+    presenting as a different kind of failure. The provider's own catalogue plus
+    a real request is the only thing that stays true.
+
+    Returns (model, note) or None. Only the small tool test is used: it is one
+    request per candidate, and a model that cannot manage that will not manage a
+    full-size turn either.
+    """
+    from .llm.pool import Endpoint
+
+    for model in _candidate_models(catalogue, endpoint.model)[:limit]:
+        trial = Endpoint(
+            model=model, api_key=endpoint.api_key, base_url=endpoint.base_url,
+            label=f"{endpoint.label.split(':', 1)[0]}:{model}",
+        )
+        print(f"{DIM}  trying {model}…{RESET}", flush=True)
+        result = await call(
+            client, trial,
+            [SYSTEM_MESSAGE, {"role": "user", "content": "What is NVDA trading at right now?"}],
+            tools=[TEST_TOOL],
+        )
+        if not result["ok"]:
+            print(f"{DIM}    {result['error'][:80]}{RESET}")
+            continue
+        ok, why = tool_call_correct(result)
+        if ok:
+            return model, f"{result['seconds']:.2f}s, tool call correct"
+        print(f"{DIM}    answered but {why}{RESET}")
+    return None
+
+
+def _key_setting_for(endpoint) -> str:
+    """The API-key setting for this provider, given its model setting."""
+    return _setting_for(endpoint).replace("_MODEL_LADDER", "_API_KEY").replace(
+        "_MODEL", "_API_KEY"
+    )
+
+
 async def available_models(client: httpx.AsyncClient, pool) -> dict[str, set[str]]:
     """Ask each provider what its key can actually reach, keyed by base URL.
 
@@ -427,6 +509,35 @@ async def main() -> int:
         used = row.get("prompt_tokens")
         if used:
             print(f"    {DIM}a full-size turn costs ~{used} input tokens here{RESET}")
+
+    # An endpoint that failed for a reason a different model would fix. A rate
+    # limit is excluded — that one is about timing, and swapping models to dodge
+    # it would quietly move you off the model you chose.
+    repairable = [
+        (e, r) for e, r in zip(testable, rows, strict=False)
+        if not r.get("tools_large")
+        and any(code in str(r.get("error", "")) for code in ("402", "404", "429"))
+        and "rate limit reached" not in str(r.get("error", "")).lower()
+    ]
+    if repairable:
+        print(f"\n{BOLD}Looking for models that do work…{RESET}")
+        for endpoint, row in repairable:
+            models = catalogue.get(endpoint.base_url)
+            if not models:
+                continue
+            print(f"{DIM}{endpoint.label}:{RESET}")
+            async with httpx.AsyncClient() as repair_client:
+                found = await find_working_model(repair_client, endpoint, models)
+            if found:
+                model, note = found
+                print(f"  {GREEN}✓ {model}{RESET} {DIM}({note}){RESET}")
+                print(f"    {BOLD}bash scripts/setkey.sh {_setting_for(endpoint)} {model}{RESET}")
+                row["replacement"] = model
+            else:
+                key_setting = _key_setting_for(endpoint)
+                print(f"  {RED}✗ nothing on this provider answered a tool call.{RESET}")
+                print(f"    {DIM}Its free tier may be exhausted or closed.{RESET}")
+                print(f"    {DIM}Clear it: bash scripts/setkey.sh {key_setting} ''{RESET}")
 
     usable = [r for r in rows if r.get("tools_large")]
     print()
