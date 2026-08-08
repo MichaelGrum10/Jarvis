@@ -192,6 +192,11 @@ def messages_for(messages: list[dict], base_url: str) -> list[dict]:
         clean = {k: v for k, v in message.items() if k != "_origin"}
         if origin != base_url:
             clean = {k: v for k, v in clean.items() if k in _STANDARD_KEYS}
+            # Null content is legal OpenAI and Groq emits it on every tool-call
+            # message, but Gemini's validator refuses it outright — "Value is not
+            # a string: null". An empty string means the same thing to everyone.
+            if clean.get("content") is None:
+                clean["content"] = ""
             if clean.get("tool_calls"):
                 clean["tool_calls"] = [
                     {
@@ -519,10 +524,12 @@ class GroqClient:
         lines = [f"No endpoint could answer ({', '.join(parts) or 'none available'})."]
 
         if broken:
-            lines.append(
-                "These look misconfigured rather than busy, and won't recover on their "
-                f"own: {'; '.join(broken[:3])}."
-            )
+            # Not "misconfigured": the faults that really are config problems
+            # retire the endpoint and get their own line above. What lands here
+            # is a provider erroring — upstream trouble, a rejected payload, a
+            # bad gateway — which is usually transient and is not something the
+            # user has done wrong.
+            lines.append(f"Provider errors: {'; '.join(broken[:3])}.")
         declined = [e for e in errors if "cannot continue" in e]
         if declined:
             lines.append(
@@ -568,13 +575,19 @@ class GroqClient:
         # Advising more capacity only makes sense while some remains. With every
         # endpoint retired the problem is that none of them work, and "add a
         # second provider" reads as advice to paper over it.
+        # Both can be true at once: a provider erroring and no second provider to
+        # fall back to are separate facts, and the earlier elif hid whichever
+        # came second.
+        if broken:
+            lines.append(
+                "Those are usually transient. If they persist: "
+                "docker compose exec jarvis python -m jarvis.benchmark"
+            )
         if len(live) == 1:
             lines.append(
                 "You're on a single endpoint, so one busy minute stops everything. "
                 "A second provider gives independent capacity — see docs/model-capacity.md."
             )
-        elif broken:
-            lines.append("Check them with: docker compose exec jarvis python -m jarvis.benchmark")
 
         return " ".join(lines)
 

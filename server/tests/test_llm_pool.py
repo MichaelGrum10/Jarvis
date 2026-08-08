@@ -457,9 +457,15 @@ async def test_exhaustion_separates_misconfigured_from_busy():
                 await client.complete([{"role": "user", "content": "hi"}])
 
         message = str(exc.value)
-        assert "misconfigured" in message
+        # A rejected key and a busy minute must not read the same. The key
+        # problem is named as a provider error and points at the benchmark; the
+        # busy one gets a wait estimate.
+        assert "Provider errors" in message
         assert "valid API key" in message
-        assert "won't recover on their own" in message
+        # The busy one still gets a wait estimate; the key one does not pretend
+        # to be coming back on a timer.
+        assert "Rate limited" in message
+        assert "benchmark" in message
     finally:
         await client.aclose()
 
@@ -1080,3 +1086,50 @@ def test_a_rejected_key_is_not_sent_to_the_model_search():
 
     assert "Clear their keys" in message
     assert "benchmark to find a working model" not in message
+
+
+def test_null_content_is_normalised_when_a_message_travels():
+    """Groq emits content: null on every tool-call message. Gemini refuses it —
+    "Value is not a string: null" — so a Groq turn continued on Gemini died on
+    a message that was never Gemini's."""
+    from jarvis.llm.client import messages_for
+
+    from_groq = {
+        "role": "assistant", "content": None, "_origin": GROQ,
+        "tool_calls": [{"id": "c1", "type": "function",
+                        "function": {"name": "calendar_list", "arguments": "{}"}}],
+    }
+
+    sent = messages_for([from_groq], GEMINI_URL)[0]
+
+    assert sent["content"] == ""
+    assert sent["tool_calls"][0]["function"]["name"] == "calendar_list"
+
+
+def test_null_content_is_left_alone_going_home():
+    """The provider that produced it accepts its own output."""
+    from jarvis.llm.client import messages_for
+
+    from_groq = {"role": "assistant", "content": None, "_origin": GROQ, "tool_calls": [{"id": "c"}]}
+
+    assert messages_for([from_groq], GROQ)[0]["content"] is None
+
+
+async def test_a_provider_error_is_not_called_a_misconfiguration():
+    """"Won't recover on their own" is wrong for upstream trouble, and sends the
+    user to check a configuration that is fine."""
+    client = GroqClient(settings(groq_model_ladder="a"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                return_value=httpx.Response(502, json=error_body("Provider returned error"))
+            )
+            with pytest.raises(LLMError) as caught:
+                await client.complete([{"role": "user", "content": "hi"}])
+
+        message = str(caught.value)
+        assert "misconfigured" not in message
+        assert "won't recover" not in message
+        assert "transient" in message
+    finally:
+        await client.aclose()
