@@ -151,25 +151,31 @@ class Agent:
                 yield AgentEvent("final", {"reply": reply, "step": step})
                 return
 
-            # Record the assistant's tool-call turn verbatim; the API requires it to
-            # precede the matching tool results.
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": response.content or None,
-                    "tool_calls": [
-                        {
-                            "id": call.id,
-                            "type": "function",
-                            "function": {
-                                "name": call.name,
-                                "arguments": json.dumps(call.arguments),
-                            },
-                        }
-                        for call in response.tool_calls
-                    ],
-                }
-            )
+            # The provider's own message, kept intact and tagged with who sent
+            # it. Rebuilding it from the parsed fields is what broke Gemini 3:
+            # it signs its tool calls and rejects a follow-up whose signature has
+            # gone missing. `messages_for` strips such extras again if the next
+            # step lands on a different provider.
+            if response.raw_message:
+                messages.append({**response.raw_message, "_origin": response.origin})
+            else:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": response.content or None,
+                        "tool_calls": [
+                            {
+                                "id": call.id,
+                                "type": "function",
+                                "function": {
+                                    "name": call.name,
+                                    "arguments": json.dumps(call.arguments),
+                                },
+                            }
+                            for call in response.tool_calls
+                        ],
+                    }
+                )
 
             if response.content.strip():
                 yield AgentEvent("thinking", {"text": response.content.strip(), "step": step})

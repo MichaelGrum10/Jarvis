@@ -732,3 +732,56 @@ async def test_a_billing_wall_does_not_stop_a_working_provider():
         assert client.pool.endpoints[0].retired == "needs a paid plan"
     finally:
         await client.aclose()
+
+
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def _signed_tool_call():
+    """A Gemini tool call, complete with the field it insists on getting back."""
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{
+            "id": "c1",
+            "type": "function",
+            "function": {"name": "calendar_list", "arguments": '{"start": "today"}'},
+            "thought_signature": "sig-abc123",
+        }],
+        "_origin": GEMINI_URL,
+    }
+
+
+def test_a_providers_own_fields_survive_a_round_trip_home():
+    """Gemini 3 refuses a follow-up whose tool call has lost its
+    thought_signature — the field it added and we discarded."""
+    from jarvis.llm.client import messages_for
+
+    sent = messages_for([_signed_tool_call()], GEMINI_URL)[0]
+
+    assert sent["tool_calls"][0]["thought_signature"] == "sig-abc123"
+    assert "_origin" not in sent, "internal bookkeeping must never reach the API"
+
+
+def test_provider_specific_fields_are_stripped_when_the_message_travels():
+    """The pool fails over mid-conversation, so Gemini's fields can end up
+    being sent to Groq, which has never heard of them."""
+    from jarvis.llm.client import messages_for
+
+    sent = messages_for([_signed_tool_call()], GROQ)[0]
+
+    assert "thought_signature" not in sent["tool_calls"][0]
+    assert sent["tool_calls"][0]["function"]["name"] == "calendar_list"
+    assert "_origin" not in sent
+
+
+def test_ordinary_messages_pass_through_untouched():
+    from jarvis.llm.client import messages_for
+
+    history = [
+        {"role": "system", "content": "you are jarvis"},
+        {"role": "user", "content": "what's on today"},
+        {"role": "tool", "tool_call_id": "c1", "name": "calendar_list", "content": "[]"},
+    ]
+
+    assert messages_for(history, GROQ) == history

@@ -84,10 +84,56 @@ class LLMResponse:
     finish_reason: str = "stop"
     usage: dict = field(default_factory=dict)
     model: str = ""
+    # The assistant message exactly as the provider returned it, plus which
+    # endpoint produced it. Rebuilding this message from the parsed fields drops
+    # anything the provider added, and some providers require their own fields
+    # back verbatim: Gemini 3 rejects a follow-up with "Function call is missing
+    # a thought_signature in functionCall parts", because that signature was in
+    # the message we discarded.
+    raw_message: dict = field(default_factory=dict)
+    origin: str = ""
 
     @property
     def wants_tools(self) -> bool:
         return bool(self.tool_calls)
+
+
+# What every OpenAI-compatible provider understands on an assistant message.
+# Anything else is the originating provider's own addition.
+_STANDARD_KEYS = frozenset({"role", "content", "tool_calls", "tool_call_id", "name", "refusal"})
+
+
+def messages_for(messages: list[dict], base_url: str) -> list[dict]:
+    """Prepare the history for one specific provider.
+
+    Assistant messages are stored exactly as their provider returned them,
+    because some require their own fields back — Gemini 3 refuses a follow-up
+    whose tool call has lost its thought_signature. But the pool fails over
+    mid-conversation, so those same fields may next be sent to a provider that
+    has never heard of them. Extras are therefore kept when the message goes
+    home and stripped when it travels.
+    """
+    prepared = []
+    for message in messages:
+        origin = message.get("_origin")
+        if origin is None:
+            prepared.append(message)
+            continue
+
+        clean = {k: v for k, v in message.items() if k != "_origin"}
+        if origin != base_url:
+            clean = {k: v for k, v in clean.items() if k in _STANDARD_KEYS}
+            if clean.get("tool_calls"):
+                clean["tool_calls"] = [
+                    {
+                        "id": c.get("id"),
+                        "type": "function",
+                        "function": c.get("function", {}),
+                    }
+                    for c in clean["tool_calls"]
+                ]
+        prepared.append(clean)
+    return prepared
 
 
 class _RateLimited(Exception):
@@ -379,7 +425,7 @@ class GroqClient:
     ) -> LLMResponse:
         payload: dict[str, Any] = {
             "model": endpoint.model,
-            "messages": messages,
+            "messages": messages_for(messages, endpoint.base_url),
             "temperature": self.settings.llm_temperature if temperature is None else temperature,
             "max_tokens": max_tokens or self.settings.llm_max_tokens,
         }
@@ -442,6 +488,8 @@ class GroqClient:
             finish_reason=choice.get("finish_reason", "stop"),
             usage=data.get("usage", {}),
             model=data.get("model", endpoint.model),
+            raw_message=message,
+            origin=endpoint.base_url,
         )
 
     # ---------------------------------------------------------------- models
