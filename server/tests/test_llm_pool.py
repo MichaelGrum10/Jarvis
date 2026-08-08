@@ -627,7 +627,9 @@ async def test_a_brief_cooldown_is_waited_out_rather_than_failed():
     """The reported bug: "No endpoint could answer (2 still cooling down)" for a
     pool whose capacity returned four seconds later. Failing instantly when
     everything is resting is a self-inflicted outage."""
-    client = GroqClient(settings(groq_model_ladder="a"))
+    # Waiting is disabled suite-wide (see conftest); this test is about the
+    # waiting, so it turns it back on.
+    client = GroqClient(settings(groq_model_ladder="a", llm_wait_seconds=5.0))
     client.pool.endpoints[0].rest(0.3)
     try:
         with respx.mock:
@@ -997,7 +999,9 @@ def test_a_cooling_endpoint_says_why_and_for_how_long():
 async def test_a_turn_that_already_ran_tools_waits_rather_than_discarding_the_work():
     """Failing here throws away a completed calendar read and makes the user ask
     again from scratch, so the longer silence is the cheaper option."""
-    client = GroqClient(settings(groq_model_ladder="a"))
+    client = GroqClient(settings(
+        groq_model_ladder="a", llm_retry_wait_mid_turn_seconds=5.0
+    ))
     try:
         with respx.mock:
             respx.post(f"{GROQ}/chat/completions").mock(

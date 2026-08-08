@@ -133,6 +133,23 @@ class Agent:
         tool_schemas = [t.schema() for t in selected]
 
         for step in range(1, MAX_STEPS + 1):
+            # The client waits for a cooling endpoint rather than failing, which
+            # without this is a silent pause indistinguishable from a hang — and
+            # a silent pause is what makes people reload and spend the scarce
+            # capacity twice.
+            pool = getattr(self.llm, "pool", None)
+            if pool is not None and not pool.ready():
+                pause = pool.wait_hint()
+                if pause > 2:
+                    yield AgentEvent(
+                        "thinking",
+                        {
+                            "text": f"Both providers are at their limit — waiting "
+                                    f"{int(pause)}s for capacity.",
+                            "step": step,
+                        },
+                    )
+
             try:
                 response = await self.llm.complete(messages, tool_schemas)
             except LLMError as exc:

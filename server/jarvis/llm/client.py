@@ -35,12 +35,16 @@ MAX_WAIT_SECONDS = 20.0
 # Tighter than the one above, because that wait happens before any work and this
 # one happens after a round of requests has already cost time. Past this, the
 # error is more use than a longer silence.
-RETRY_WAIT_SECONDS = 8.0
+# An error that says "try again in 15s" is strictly worse than waiting 15s: it
+# asks the user to do by hand, with worse timing, exactly what this can do
+# itself. The ceiling exists only for waits long enough that a person would
+# rather know than sit there.
+RETRY_WAIT_SECONDS = 25.0
 
 # The same ceiling once a turn has already run tools. Failing here throws away
 # completed work — a calendar read, a places search — and makes the user ask
 # again from scratch, so a longer silence is the cheaper of the two.
-RETRY_WAIT_MID_TURN_SECONDS = 30.0
+RETRY_WAIT_MID_TURN_SECONDS = 45.0
 
 
 class LLMError(RuntimeError):
@@ -282,6 +286,7 @@ class GroqClient:
         temperature: float | None = None,
         max_tokens: int | None = None,
         force_json: bool = False,
+        on_wait: Any = None,
         _retried_after_wait: bool = False,
     ) -> LLMResponse:
         retried_after_wait = _retried_after_wait
@@ -300,7 +305,7 @@ class GroqClient:
         # self-inflicted outage. Wait for it instead — but only briefly, because
         # a minute of silence is worse than a clear message.
         if not candidates:
-            if await self._wait_for_capacity():
+            if await self._wait_for_capacity(self.settings.llm_wait_seconds, on_wait):
                 candidates = self._candidates(model, messages)
 
         errors: list[str] = []
@@ -401,17 +406,21 @@ class GroqClient:
         # extra pass only — a second failure means something other than timing.
         if any("rate limited" in e for e in errors) and not retried_after_wait:
             mid_turn = any(m.get("role") == "tool" for m in messages)
-            ceiling = RETRY_WAIT_MID_TURN_SECONDS if mid_turn else RETRY_WAIT_SECONDS
-            if await self._wait_for_capacity(ceiling):
+            ceiling = (
+                self.settings.llm_retry_wait_mid_turn_seconds
+                if mid_turn
+                else self.settings.llm_retry_wait_seconds
+            )
+            if await self._wait_for_capacity(ceiling, on_wait):
                 return await self.complete(
                     messages, tools, model=model, temperature=temperature,
-                    max_tokens=max_tokens, force_json=force_json,
+                    max_tokens=max_tokens, force_json=force_json, on_wait=on_wait,
                     _retried_after_wait=True,
                 )
 
         raise LLMError(self._exhausted_message(errors))
 
-    async def _wait_for_capacity(self, ceiling: float = MAX_WAIT_SECONDS) -> bool:
+    async def _wait_for_capacity(self, ceiling: float | None = None, on_wait: Any = None) -> bool:
         """Pause for a cooling endpoint, if one is coming back soon enough.
 
         The ceiling matters in both directions. Too low and a four-second
@@ -419,6 +428,8 @@ class GroqClient:
         provider on a long daily cap leaves the user staring at nothing. Above
         the ceiling the error is more useful than the wait.
         """
+        if ceiling is None:
+            ceiling = self.settings.llm_wait_seconds
         soonest = self.pool.soonest()
         if soonest is None:
             return False  # everything retired; waiting cannot help
@@ -430,6 +441,10 @@ class GroqClient:
             return False
 
         log.info("All endpoints cooling; waiting %.1fs for %s", wait, soonest.label)
+        # Without this the pause is indistinguishable from a hang, and a silent
+        # wait is exactly what makes people reload and spend the capacity twice.
+        if on_wait:
+            on_wait(wait, soonest.label)
         await asyncio.sleep(wait + 0.1)
         return True
 

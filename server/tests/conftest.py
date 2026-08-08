@@ -21,6 +21,11 @@ os.environ.update(
         "DATA_DIR": _TMP,
         "TIMEZONE": "America/New_York",
         "OWNER_NAME": "Tester",
+        # Waiting for capacity is correct in production and pure dead time here:
+        # a handful of pool-exhaustion tests otherwise sleep for a minute.
+        "LLM_WAIT_SECONDS": "0",
+        "LLM_RETRY_WAIT_SECONDS": "0",
+        "LLM_RETRY_WAIT_MID_TURN_SECONDS": "0",
     }
 )
 

@@ -128,6 +128,14 @@ class Settings(BaseSettings):
     mistral_api_key: str = ""
     mistral_base_url: str = "https://api.mistral.ai/v1"
     mistral_model: str = "mistral-large-latest"
+    # How long a request may wait for a cooling endpoint rather than failing.
+    # An error saying "try again in 15s" is worse than waiting 15s, so these are
+    # generous — but they are settings rather than constants so the test suite
+    # can set them to zero and not spend a minute asleep.
+    llm_wait_seconds: float = 20.0
+    llm_retry_wait_seconds: float = 25.0
+    # Higher once tools have run: failing then discards completed work.
+    llm_retry_wait_mid_turn_seconds: float = 45.0
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.3
     # Whisper on Groq: free with the same key, and better than the browser engines.
