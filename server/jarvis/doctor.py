@@ -166,7 +166,11 @@ async def _check_pool(report: Report) -> None:
                 "Remove it from GROQ_MODEL_LADDER in .env; it will never recover.",
             )
             continue
-        state = "ready" if entry["available"] else f"cooling {entry['cooling_for']}s"
+        if entry["available"]:
+            state = "ready"
+        else:
+            because = entry.get("cooling_because") or "earlier failure"
+            state = f"cooling {entry['cooling_for']}s after {because}"
         report.ok(f"  {entry['label']}", f"key {entry['key']}, {state}")
 
     try:

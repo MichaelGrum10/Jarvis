@@ -61,6 +61,7 @@ class Endpoint:
     successes: int = 0
     failures: int = 0
     retired: str = ""  # why this endpoint is out for good, "" while in use
+    resting_because: str = ""  # why it is cooling right now
 
     def __post_init__(self) -> None:
         if not self.label:
@@ -88,7 +89,7 @@ class Endpoint:
     def seconds_until_available(self) -> float:
         return max(0.0, self.cooldown_until - time.monotonic())
 
-    def rest(self, seconds: float | None = None, *, escalate: bool = True) -> None:
+    def rest(self, seconds: float | None = None, *, escalate: bool = True, why: str = "") -> None:
         """Take this endpoint out of rotation briefly.
 
         `escalate` is for faults that get worse the more you retry them — a
@@ -100,12 +101,17 @@ class Endpoint:
         """
         self.consecutive_failures += 1
         self.failures += 1
+        # "1 still cooling down from earlier failures" says nothing about which
+        # failure, so there is no way to tell a busy provider from a broken one
+        # without reading the server log.
+        self.resting_because = why or self.resting_because
         if seconds is None:
             steps = self.consecutive_failures - 1 if escalate else 0
             seconds = min(DEFAULT_COOLDOWN * (2**steps), MAX_COOLDOWN)
         self.cooldown_until = time.monotonic() + max(0.0, seconds)
 
     def succeeded(self) -> None:
+        self.resting_because = ""
         self.consecutive_failures = 0
         self.successes += 1
         self.cooldown_until = 0.0
@@ -160,6 +166,7 @@ class Pool:
                 "key": e.masked_key(),
                 "available": e.available,
                 "cooling_for": round(e.seconds_until_available, 1),
+                "cooling_because": e.resting_because,
                 "retired": e.retired,
                 "successes": e.successes,
                 "failures": e.failures,

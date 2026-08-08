@@ -481,7 +481,10 @@ async def test_endpoints_still_cooling_are_not_counted_as_tried():
 
         message = str(exc.value)
         assert "tried 1 of 2" in message
-        assert "cooling down" in message
+        assert "still cooling" in message
+        # Naming which endpoint, and for how long, is the difference between a
+        # status line and something the user can act on.
+        assert "model-a" in message or "model-b" in message
     finally:
         await client.aclose()
 
@@ -977,3 +980,39 @@ def test_retry_after_still_wins_when_present():
         headers = {"retry-after": "5", "x-ratelimit-reset-tokens": "19.222s"}
 
     assert _retry_after(R()) == 5.0
+
+
+def test_a_cooling_endpoint_says_why_and_for_how_long():
+    """"1 still cooling down from earlier failures" cannot distinguish a busy
+    provider from a broken one without reading the server log."""
+    client = GroqClient(settings(groq_model_ladder="a,b"))
+    client.pool.endpoints[0].rest(30.0, escalate=False, why="rate limited")
+
+    message = client._exhausted_message(["groq:b: request too large"])
+
+    assert "rate limited" in message
+    assert "30s" in message or "29s" in message
+
+
+async def test_a_turn_that_already_ran_tools_waits_rather_than_discarding_the_work():
+    """Failing here throws away a completed calendar read and makes the user ask
+    again from scratch, so the longer silence is the cheaper option."""
+    client = GroqClient(settings(groq_model_ladder="a"))
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                side_effect=[
+                    httpx.Response(429, json=error_body("rate limited"),
+                                   headers={"retry-after": "1"}),
+                    httpx.Response(200, json=ok_body("Nothing on today.")),
+                ]
+            )
+            response = await client.complete([
+                {"role": "assistant", "content": None,
+                 "tool_calls": [{"id": "c1", "type": "function",
+                                 "function": {"name": "calendar_list", "arguments": "{}"}}]},
+                {"role": "tool", "tool_call_id": "c1", "name": "calendar_list", "content": "[]"},
+            ])
+        assert response.content == "Nothing on today."
+    finally:
+        await client.aclose()

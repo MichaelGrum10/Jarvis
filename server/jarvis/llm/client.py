@@ -37,6 +37,11 @@ MAX_WAIT_SECONDS = 20.0
 # error is more use than a longer silence.
 RETRY_WAIT_SECONDS = 8.0
 
+# The same ceiling once a turn has already run tools. Failing here throws away
+# completed work — a calendar read, a places search — and makes the user ask
+# again from scratch, so a longer silence is the cheaper of the two.
+RETRY_WAIT_MID_TURN_SECONDS = 30.0
+
 
 class LLMError(RuntimeError):
     pass
@@ -310,14 +315,14 @@ class GroqClient:
                 return response
 
             except _RateLimited as exc:
-                endpoint.rest(exc.retry_after, escalate=False)
+                endpoint.rest(exc.retry_after, escalate=False, why="rate limited")
                 errors.append(f"{endpoint.label}: rate limited")
                 log.info("Rate limited on %s, moving on", endpoint.label)
 
             except _TooLarge as exc:
                 # Never retried on a smaller model — that is a guaranteed second
                 # failure. Only a roomier endpoint is worth trying.
-                endpoint.rest(5.0)
+                endpoint.rest(5.0, why="request too large")
                 errors.append(f"{endpoint.label}: request too large")
                 log.info("Too large for %s: %s", endpoint.label, exc.detail)
 
@@ -386,7 +391,7 @@ class GroqClient:
                 log.warning("%s unusable: %s", endpoint.label, exc.detail[:200])
 
             except _Upstream as exc:
-                endpoint.rest()
+                endpoint.rest(why=exc.detail[:40])
                 errors.append(f"{endpoint.label}: {exc.detail[:80]}")
                 log.warning("Upstream error on %s: %s", endpoint.label, exc.detail[:200])
 
@@ -395,7 +400,9 @@ class GroqClient:
         # about 4s" is asking them to do by hand what this can do itself. One
         # extra pass only — a second failure means something other than timing.
         if any("rate limited" in e for e in errors) and not retried_after_wait:
-            if await self._wait_for_capacity(RETRY_WAIT_SECONDS):
+            mid_turn = any(m.get("role") == "tool" for m in messages)
+            ceiling = RETRY_WAIT_MID_TURN_SECONDS if mid_turn else RETRY_WAIT_SECONDS
+            if await self._wait_for_capacity(ceiling):
                 return await self.complete(
                     messages, tools, model=model, temperature=temperature,
                     max_tokens=max_tokens, force_json=force_json,
@@ -482,7 +489,14 @@ class GroqClient:
         if tried:
             parts.append(f"tried {tried} of {total} endpoints")
         if skipped > 0:
-            parts.append(f"{skipped} still cooling down from earlier failures")
+            resting = [
+                f"{e.label} ({e.resting_because or 'earlier failure'}, {int(e.seconds_until_available)}s)"
+                for e in self.pool.endpoints
+                if not e.retired and not e.available
+                and not any(err.startswith(e.label) for err in errors)
+            ]
+            detail = ": " + "; ".join(resting[:3]) if resting else ""
+            parts.append(f"{skipped} still cooling{detail}")
         if retired:
             parts.append(f"{len(retired)} retired as unusable")
 
