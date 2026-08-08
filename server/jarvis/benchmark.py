@@ -474,6 +474,16 @@ async def main() -> int:
         print(f"{RED}No endpoints configured.{RESET} Set GROQ_API_KEY in .env.")
         return 1
 
+    # Named up front so a provider you thought you configured is obvious by its
+    # absence. A key that was written to .env without restarting the container
+    # otherwise shows up as nothing at all, which reads as the provider failing
+    # rather than never having been loaded.
+    providers = sorted({e.label.split(":", 1)[0] for e in pool.endpoints})
+    print(f"{BOLD}Pool:{RESET} {len(pool)} endpoints across "
+          f"{len(providers)} providers — {', '.join(providers)}")
+    print(f"{DIM}A provider missing from that list has no key in the running "
+          f"container. Setting one needs: docker compose up -d{RESET}\n")
+
     async with httpx.AsyncClient() as client:
         catalogue = await available_models(client, pool)
 
