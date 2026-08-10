@@ -108,7 +108,22 @@ async def health():
 
 
 if WEB_DIR.is_dir():
-    app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+    class RevalidatingStatic(StaticFiles):
+        """Serve scripts with must-revalidate.
+
+        The modules import each other, so a browser holding one from cache while
+        fetching another fresh produces an import error and a completely dead
+        page. ETags still make the revalidation a 304 in the normal case, so
+        this costs a conditional request rather than a download.
+        """
+
+        def file_response(self, *args, **kwargs):
+            response = super().file_response(*args, **kwargs)
+            if str(getattr(response, "path", "")).endswith((".js", ".css")):
+                response.headers["Cache-Control"] = "no-cache, must-revalidate"
+            return response
+
+    app.mount("/static", RevalidatingStatic(directory=WEB_DIR), name="static")
 
     @app.get("/")
     async def index():

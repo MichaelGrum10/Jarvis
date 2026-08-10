@@ -155,3 +155,33 @@ def test_explicit_guid_still_wins(client):
     }
     assert client.post("/api/bridge/ingest", json=payload, headers=headers).json()["stored"] == 1
     assert client.post("/api/bridge/ingest", json=payload, headers=headers).json()["stored"] == 0
+
+
+def test_scripts_are_served_with_revalidation(client):
+    """The modules import each other. A browser holding one from cache while
+    fetching another fresh gets an import error and a completely dead page —
+    every button unbound, nothing to click, no error visible."""
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert "no-cache" in response.headers.get("cache-control", "")
+
+
+def test_the_hud_export_the_app_imports_actually_exists():
+    """The exact failure seen in the browser: "Importing binding name
+    'startHudPanels' is not found". Cheap to assert, and it fails at build time
+    rather than on someone's phone."""
+    import re
+    from pathlib import Path
+
+    web = Path(__file__).resolve().parents[2] / "web"
+    app_js = (web / "app.js").read_text()
+
+    for match in re.finditer(r"import\s*\{([^}]+)\}\s*from\s*'/static/(\w+)\.js'", app_js):
+        names = [n.strip() for n in match.group(1).split(",") if n.strip()]
+        source = (web / f"{match.group(2)}.js").read_text()
+        for name in names:
+            pattern = rf"export\s+(async\s+)?(function|const|let|class)\s+{re.escape(name)}\b"
+            assert re.search(pattern, source), (
+                f"app.js imports {name} from {match.group(2)}.js, which does not export it"
+            )

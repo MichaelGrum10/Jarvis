@@ -160,9 +160,31 @@
 <script>
 (function () {
   var shown = false;
+  // A mismatched pair of cached modules produces exactly this: one file fresh,
+  // one stale, and an import that no longer resolves. Clearing and reloading
+  // once fixes it, and there is no version of this the user could fix by hand.
+  function healOnce(what) {
+    if (!/Importing binding|SyntaxError|Failed to fetch dynamically imported/.test(what)) return false;
+    if (sessionStorage.getItem('jarvis_healed')) return false;   // never loop
+    sessionStorage.setItem('jarvis_healed', '1');
+    var done = function () { location.reload(); };
+    var jobs = [];
+    if (window.caches) jobs.push(caches.keys().then(function (keys) {
+      return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+    }));
+    if (navigator.serviceWorker) jobs.push(
+      navigator.serviceWorker.getRegistrations().then(function (rs) {
+        return Promise.all(rs.map(function (r) { return r.unregister(); }));
+      })
+    );
+    Promise.all(jobs).then(done, done);
+    return true;
+  }
+
   function show(what) {
     if (shown) return;
     shown = true;
+    if (healOnce(what)) return;
     var bar = document.createElement('div');
     bar.setAttribute('role', 'alert');
     bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;'
