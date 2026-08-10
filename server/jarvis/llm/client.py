@@ -403,8 +403,16 @@ class GroqClient:
                         )
                         endpoint.succeeded()
                         return response
-                    except Exception:
-                        log.info("%s also declined the flattened history", endpoint.label)
+                    except Exception as second:
+                        # Report why the fallback failed too. Reporting only the
+                        # first refusal hid a rate limit behind a protocol
+                        # message and sent the user after the wrong problem.
+                        log.info("%s also declined the flattened history: %s", endpoint.label, second)
+                        errors.append(
+                            f"{endpoint.label}: cannot continue another provider's tool call, "
+                            f"and retrying without it failed too ({type(second).__name__})"
+                        )
+                        continue
                 # Neither rested nor retired: the endpoint is healthy and will be
                 # first choice again on the next turn.
                 errors.append(f"{endpoint.label}: cannot continue another provider's tool call")
@@ -423,7 +431,13 @@ class GroqClient:
         # capacity is seconds away, take it: telling someone to "try again in
         # about 4s" is asking them to do by hand what this can do itself. One
         # extra pass only — a second failure means something other than timing.
-        if any("rate limited" in e for e in errors) and not retried_after_wait:
+        # Conditioned on capacity returning, not on a rate-limit error having
+        # been recorded. An endpoint already cooling when the request arrived is
+        # never tried, so it contributes no error — and the previous condition
+        # therefore skipped the wait in exactly the case where waiting was most
+        # obviously right: a healthy endpoint three seconds from ready, and two
+        # others that had just failed for unrelated reasons.
+        if not retried_after_wait and self.pool.soonest() is not None:
             mid_turn = any(m.get("role") == "tool" for m in messages)
             ceiling = (
                 self.settings.llm_retry_wait_mid_turn_seconds

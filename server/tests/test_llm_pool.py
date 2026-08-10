@@ -1191,3 +1191,39 @@ def test_no_null_survives_anywhere_in_a_travelled_message():
 
     assert list(nulls(sent)) == []
     assert sent["tool_calls"][0]["function"]["name"] == "calendar_find_free"
+
+
+async def test_a_pool_seconds_from_ready_waits_even_when_nothing_was_rate_limited():
+    """The reported case: Groq cooling with three seconds left, OpenRouter
+    erroring, Gemini declining the history. Nothing recorded a rate limit
+    because the cooling endpoint was never tried, so the retry never fired for
+    a pool that was about to be fine."""
+    client = GroqClient(settings(
+        groq_model_ladder="cooling,broken", llm_retry_wait_seconds=5.0
+    ))
+    cooling, broken = client.pool.endpoints
+    cooling.rest(0.3, escalate=False, why="rate limited")
+    try:
+        with respx.mock:
+            respx.post(f"{GROQ}/chat/completions").mock(
+                side_effect=[
+                    httpx.Response(502, json=error_body("Provider returned error")),
+                    httpx.Response(200, json=ok_body("answered after the wait")),
+                ]
+            )
+            response = await client.complete([{"role": "user", "content": "hi"}])
+
+        assert response.content == "answered after the wait"
+    finally:
+        await client.aclose()
+
+
+async def test_a_fully_retired_pool_does_not_wait_for_nothing():
+    client = GroqClient(settings(groq_model_ladder="a"))
+    client.pool.endpoints[0].retire("key rejected")
+    try:
+        with pytest.raises(LLMError) as caught:
+            await client.complete([{"role": "user", "content": "hi"}])
+        assert "Capacity returns" not in str(caught.value)
+    finally:
+        await client.aclose()
