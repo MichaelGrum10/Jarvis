@@ -416,14 +416,35 @@ class AutonomyEngine:
             return 1, "git timed out"
         return proc.returncode or 0, out.decode(errors="replace")
 
+    async def _prepare_git(self, root: Path, emit) -> None:
+        """Make git willing to work in a repository it did not create.
+
+        The checkout is bind-mounted from the host, so it belongs to the host
+        user while this process runs as root. Git refuses that outright —
+        "detected dubious ownership" — and every operation fails before doing
+        anything. The image marks /app safe, but the mount lands at /app/repo,
+        and the path is configurable anyway, so it is added here where the real
+        value is known.
+
+        A commit identity is set for the same reason: without one, git aborts
+        the commit after the work is already done.
+        """
+        await self._git(root, "config", "--global", "--add", "safe.directory", str(root))
+        code, _ = await self._git(root, "config", "user.email")
+        if code != 0:
+            await self._git(root, "config", "user.email", "jarvis@localhost")
+            await self._git(root, "config", "user.name", "Jarvis")
+            emit("Set a local commit identity for this repository.")
+
     async def _create_branch(self, root: Path, goal: str, emit) -> str:
+        await self._prepare_git(root, emit)
         slug = re.sub(r"[^a-z0-9]+", "-", goal.lower())[:40].strip("-") or "task"
         import time
 
         branch = f"{self.settings.autonomy_branch_prefix}/{slug}-{int(time.time())}"
         code, out = await self._git(root, "checkout", "-b", branch)
         if code != 0:
-            emit(f"Could not create branch ({out.strip()}); working in place.")
+            emit(f"Could not create branch: {out.strip()[:300]}")
             return ""
         emit(f"Working on branch {branch}")
         return branch

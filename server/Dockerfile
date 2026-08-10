@@ -28,7 +28,12 @@ RUN if [ "$BROWSER_ENABLED" = "true" ]; then \
 COPY server /app/server
 COPY web /app/web
 
-RUN mkdir -p /data && git config --global --add safe.directory /app
+# /app/repo is where docker-compose mounts the checkout for self-improvement.
+# Without it git refuses every operation there with "dubious ownership", since
+# the directory belongs to the host user and this process runs as root.
+RUN mkdir -p /data \
+    && git config --global --add safe.directory /app \
+    && git config --global --add safe.directory /app/repo
 
 EXPOSE 8000
 
