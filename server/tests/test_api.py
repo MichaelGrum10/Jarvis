@@ -177,7 +177,7 @@ def test_the_hud_export_the_app_imports_actually_exists():
     web = Path(__file__).resolve().parents[2] / "web"
     app_js = (web / "app.js").read_text()
 
-    for match in re.finditer(r"import\s*\{([^}]+)\}\s*from\s*'/static/(\w+)\.js'", app_js):
+    for match in re.finditer(r"import\s*\{([^}]+)\}\s*from\s*'/static/(\w+)\.js[^']*'", app_js):
         names = [n.strip() for n in match.group(1).split(",") if n.strip()]
         source = (web / f"{match.group(2)}.js").read_text()
         for name in names:
@@ -205,3 +205,20 @@ def test_reset_depends_on_nothing_already_cached(client):
     body = response.text
     assert "caches.delete" in body
     assert "unregister" in body
+
+
+def test_every_module_url_carries_the_same_version():
+    """A cached copy lives at a different URL and cannot be served, so a
+    mismatch resolves itself. That only holds while the versions agree — one
+    stale number reintroduces exactly the bug this prevents."""
+    import re
+    from pathlib import Path
+
+    web = Path(__file__).resolve().parents[2] / "web"
+    versions = set()
+    for name in ("app.js", "index.html", "sw.js"):
+        text = (web / name).read_text()
+        versions.update(re.findall(r"\?v=(\d+)", text))
+        versions.update(re.findall(r"const V = '(\d+)'", text))
+
+    assert len(versions) == 1, f"module URLs disagree on version: {sorted(versions)}"

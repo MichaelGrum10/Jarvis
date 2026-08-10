@@ -8,8 +8,8 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js';
+import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js?v=11';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=11';
 
 const API = '';
 const store = {

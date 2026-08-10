@@ -2,9 +2,12 @@
  * API calls are never cached — stale calendar data is worse than an error. */
 
 const CACHE = 'jarvis-shell-v11';
+// Versioned to match the URLs index.html and app.js actually request. An
+// unversioned entry here would warm the cache with a URL nothing asks for.
+const V = '11';
 const SHELL = [
-  '/', '/static/app.js', '/static/voice.js', '/static/hud.js',
-  '/static/style.css', '/static/hud.css', '/manifest.webmanifest',
+  '/', `/static/app.js?v=${V}`, `/static/voice.js?v=${V}`, `/static/hud.js?v=${V}`,
+  `/static/style.css?v=${V}`, `/static/hud.css?v=${V}`, '/manifest.webmanifest',
 ];
 
 self.addEventListener('install', (event) => {
