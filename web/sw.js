@@ -1,7 +1,7 @@
 /* Service worker: makes Jarvis installable and keeps the shell available offline.
  * API calls are never cached — stale calendar data is worse than an error. */
 
-const CACHE = 'jarvis-shell-v8';
+const CACHE = 'jarvis-shell-v9';
 const SHELL = [
   '/', '/static/app.js', '/static/voice.js', '/static/hud.js',
   '/static/style.css', '/static/hud.css', '/manifest.webmanifest',

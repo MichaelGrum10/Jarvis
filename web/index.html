@@ -153,6 +153,43 @@
   </div>
 </div>
 
+<!-- Startup failures are otherwise invisible: a module that throws leaves every
+     handler unbound, so the page renders normally and no button does anything.
+     "It won't let me click unlock" is what that looks like from outside. This
+     puts the actual error on screen where it can be read and reported. -->
+<script>
+(function () {
+  var shown = false;
+  function show(what) {
+    if (shown) return;
+    shown = true;
+    var bar = document.createElement('div');
+    bar.setAttribute('role', 'alert');
+    bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:9999;'
+      + 'background:#3a1113;color:#ffd7d7;font:12px/1.4 ui-monospace,monospace;'
+      + 'padding:10px 12px;max-height:40vh;overflow:auto;border-top:1px solid #ff5f56';
+    bar.textContent = 'Jarvis failed to start: ' + what
+      + ' — reload, and if it persists send this line.';
+    document.body.appendChild(bar);
+  }
+  window.addEventListener('error', function (e) {
+    show((e.message || 'script error') + (e.filename ? ' @ ' + e.filename.split('/').pop()
+      + ':' + e.lineno : ''));
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    show(String((e.reason && e.reason.message) || e.reason || 'promise rejected'));
+  });
+  // A module that never runs is the case a plain error handler misses: the
+  // failure is a load error, not a thrown one.
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      if (!window.__jarvisStarted) {
+        show('the app script did not run (a load or syntax error)');
+      }
+    }, 3000);
+  });
+})();
+</script>
 <script type="module" src="/static/app.js"></script>
 </body>
 </html>

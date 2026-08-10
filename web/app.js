@@ -1242,4 +1242,7 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
+// Tells the startup watchdog in index.html that the module ran.
+window.__jarvisStarted = true;
+
 if (store.token) enterApp();
