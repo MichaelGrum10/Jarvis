@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 
+from .. import cache
 from ..config import get_settings
 from ..integrations.apple_calendar import get_calendar
 from ..utils.meridiem import clarification_question, resolve_meridiem
@@ -79,8 +80,12 @@ async def calendar_list(start: str, end: str = "", calendar: str = "", ctx: Tool
     if end_dt <= start_dt:
         end_dt = start_dt + dt.timedelta(days=1)
 
-    events = await get_calendar().events_between(start_dt, end_dt, calendar)
-    payload = [e.to_dict() for e in events]
+    key = f"{start_dt.isoformat()}|{end_dt.isoformat()}|{calendar}"
+    payload = cache.get("calendar", key)
+    if payload is None:
+        events = await get_calendar().events_between(start_dt, end_dt, calendar)
+        payload = [e.to_dict() for e in events]
+        cache.put("calendar", key, payload)
     # Only when the range picked out a handful. Remembering a whole week would
     # make "it" ambiguous rather than resolvable, which is the opposite of the point.
     if len(payload) <= 3:
@@ -181,6 +186,8 @@ async def calendar_create(
         alarm_minutes=reminder_minutes,
     )
     recent_events.remember(ctx.conversation_id if ctx else None, event.to_dict(), "created")
+    # The user just changed this; a cached view without it is worse than slow.
+    cache.invalidate("calendar")
     payload: dict = {"created": event.to_dict()}
     if note:
         payload["interpretation"] = note
@@ -272,6 +279,8 @@ async def calendar_update(
         calendar=calendar,
     )
     recent_events.remember(ctx.conversation_id if ctx else None, event.to_dict(), "updated")
+    # The user just changed this; a cached view without it is worse than slow.
+    cache.invalidate("calendar")
     payload: dict = {"updated": event.to_dict()}
     if note:
         payload["interpretation"] = note
@@ -303,6 +312,7 @@ async def calendar_update(
 async def calendar_delete(uid: str, calendar: str = "", ctx: ToolContext = None):
     await get_calendar().delete_event(uid, calendar)
     recent_events.forget(ctx.conversation_id if ctx else None, uid)
+    cache.invalidate("calendar")
     return ToolResult.success({"deleted": uid})
 
 

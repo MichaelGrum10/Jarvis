@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from .. import cache
 from .base import ToolResult, registry
 
 log = logging.getLogger(__name__)
@@ -105,6 +106,10 @@ async def stock_quote(symbols: list[str]):
     if not symbols:
         return ToolResult.fail("No ticker symbols given.")
 
+    cached = cache.get("stocks", ",".join(sorted(symbols)))
+    if cached is not None:
+        return ToolResult.success(cached, display={"type": "stocks", "quotes": cached.get("quotes", [])})
+
     results, errors = [], []
     settled = await asyncio.gather(
         *(asyncio.to_thread(_quote_sync, s) for s in symbols), return_exceptions=True
@@ -117,10 +122,13 @@ async def stock_quote(symbols: list[str]):
 
     if not results:
         return ToolResult.fail("; ".join(e["error"] for e in errors) or "No data returned.")
-    return ToolResult.success(
-        {"quotes": results, "errors": errors},
-        display={"type": "stocks", "quotes": results},
-    )
+
+    payload = {"quotes": results, "errors": errors}
+    # Only a clean result is cached. Storing a partial one would serve the same
+    # missing ticker for the next minute without ever retrying it.
+    if not errors:
+        cache.put("stocks", ",".join(sorted(symbols)), payload)
+    return ToolResult.success(payload, display={"type": "stocks", "quotes": results})
 
 
 @registry.tool(

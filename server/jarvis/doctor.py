@@ -411,6 +411,15 @@ def check_config(report: Report) -> None:
     report.ok("Timezone", settings.timezone)
     report.ok("Database", str(settings.db_path))
 
+    from .cache import stats
+
+    cached = stats()
+    report.ok(
+        "Cache",
+        f"{cached['entries']} entries ({', '.join(cached['kinds']) or 'empty'}), "
+        f"{cached['bytes'] // 1024}KB",
+    )
+
     # Which provider keys are actually loaded. Grepping .env only proves a line
     # exists — an empty value looks identical and does nothing.
     configured, blank = [], []

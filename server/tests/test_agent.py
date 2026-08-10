@@ -171,3 +171,19 @@ async def test_waiting_is_capped_across_the_whole_turn(monkeypatch):
     assert seen, "the loop must pass a budget at all"
     assert seen[0] is not None
     assert seen[0] <= budget
+
+
+def test_the_persona_forbids_the_habits_that_make_it_unbearable():
+    """Terse, no closing offers, and "sir" only at the edges of a task."""
+    from jarvis.agent.prompts import build_system_prompt
+    from jarvis.config import Settings
+    from jarvis.tools.base import ToolContext
+
+    prompt = build_system_prompt(
+        Settings(auth_secret="x" * 32, access_password="y" * 12),
+        ToolContext(timezone="America/New_York"),
+    )
+
+    assert "only when greeting them or reporting a finished task" in prompt
+    assert "No closing offers" in prompt
+    assert "under forty words" in prompt, "spoken replies need their own budget"
