@@ -23,6 +23,11 @@ serve a completion. And Mistral's quota is the best on offer, but this assistant
 sends your calendar, mail and messages to whichever provider answers, so
 training on that is not a trade worth making.
 
+A local gateway is worth considering over collecting keys one at a time — it
+fronts a large provider catalogue behind a single endpoint and maintains it for
+you, which is the part that kept going stale here. See
+[omniroute.md](omniroute.md).
+
 Anything OpenAI-compatible can be added without waiting for code:
 
 ```bash
