@@ -273,10 +273,12 @@ def history_from_rows(rows: list[Any]) -> list[dict]:
     Replaying full tool-call transcripts would blow the context window and confuse
     the model with stale results; the user/assistant text is what carries forward.
 
-    Kept short deliberately: this plus ~30 tool schemas plus the system prompt
-    easily exceeds Groq's free-tier per-minute token budget on longer threads,
-    especially on the smaller fallback model. Durable facts belong in memory_save,
-    not in how much raw history rides along on every single turn.
+    Kept short deliberately, and shortened further after measuring: the system
+    prompt and tool schemas already cost ~2,800 tokens per call, against a
+    free-tier budget of 8,000 per minute. History is re-sent in full on every
+    call of every turn, so each retained message is paid for several times over.
+    Durable facts belong in memory_save, which is searched on demand rather than
+    carried in every request.
     """
     out: list[dict] = []
     for row in rows:
@@ -285,4 +287,4 @@ def history_from_rows(rows: list[Any]) -> list[dict]:
         if not (row.content or "").strip():
             continue
         out.append({"role": row.role, "content": row.content})
-    return out[-12:]
+    return out[-8:]

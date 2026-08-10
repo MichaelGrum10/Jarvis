@@ -184,6 +184,35 @@ def test_the_persona_forbids_the_habits_that_make_it_unbearable():
         ToolContext(timezone="America/New_York"),
     )
 
-    assert "only when greeting them or reporting a finished task" in prompt
+    assert "only when greeting or reporting a finished task" in prompt
     assert "No closing offers" in prompt
     assert "under forty words" in prompt, "spoken replies need their own budget"
+
+
+def test_the_repeated_payloads_stay_within_a_free_tier_minute():
+    """The system prompt and tool schemas are re-sent on every call of every
+    turn, so their size is multiplied by the step count. Groq's free tier is
+    8,000 tokens per minute and a booking is three calls — this is the number
+    that decides whether one request fits in a minute."""
+    import json
+
+    from jarvis.agent.prompts import build_system_prompt
+    from jarvis.agent.toolpicker import select_tools
+    from jarvis.config import Settings
+    from jarvis.tools.base import ToolContext, load_all_tools, registry
+
+    load_all_tools()
+    settings = Settings(
+        auth_secret="x" * 32, access_password="y" * 12, groq_api_key="k",
+        icloud_email="a@b.c", icloud_app_password="p", bridge_token="t",
+    )
+    ctx = ToolContext(timezone="America/New_York")
+
+    prompt = len(build_system_prompt(settings, ctx)) // 4
+    chosen = select_tools("book a haircut tomorrow at 2", registry.available(settings, ctx))
+    schemas = len(json.dumps([t.schema() for t in chosen])) // 4
+
+    # Roughly four characters to the token; exact enough for a budget.
+    assert prompt < 950, f"system prompt is {prompt} tokens and rides on every call"
+    assert schemas < 2000, f"tool schemas are {schemas} tokens and ride on every call"
+    assert prompt + schemas < 2700, "the per-call floor decides how many turns fit in a minute"

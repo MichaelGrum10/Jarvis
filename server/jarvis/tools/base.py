@@ -41,11 +41,13 @@ class ToolResult:
     # Shown to the user as a card alongside the reply; the model only sees `data`.
     display: dict | None = None
 
-    # Tool output goes straight into the next request, so this cap is a per-turn
-    # token budget, not just a sanity limit. 12000 chars is ~3000 tokens — two
-    # parallel tools would spend more of the context on raw JSON than on the
-    # conversation. 4000 is enough for any result a person would actually read.
-    MAX_MODEL_CHARS = 4000
+    # Tool output goes straight into the next request — and into every request
+    # after it in the same turn, so a result is paid for once per remaining
+    # step, not once. At 4000 chars a two-tool turn spent ~2000 tokens of an
+    # 8000-per-minute budget on raw JSON alone. 2000 chars is ~500 tokens and
+    # still more than any result a person would read; the model asks again when
+    # it needs the rest.
+    MAX_MODEL_CHARS = 2000
 
     def for_model(self) -> str:
         if not self.ok:
