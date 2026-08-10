@@ -25,6 +25,10 @@ from ..config import Settings, get_settings
 
 log = logging.getLogger(__name__)
 
+# Per-calendar ceiling. Apple is usually fast, but a shared or subscribed
+# calendar can hang, and one of those must not take the whole request with it.
+CALENDAR_SEARCH_TIMEOUT = 12.0
+
 
 @dataclass
 class CalEvent:
@@ -121,21 +125,40 @@ class AppleCalendar:
     async def events_between(
         self, start: dt.datetime, end: dt.datetime, calendar: str = ""
     ) -> list[CalEvent]:
-        return await asyncio.to_thread(self._events_between, start, end, calendar)
+        """Search every calendar at once rather than one after another.
 
-    def _events_between(self, start, end, calendar: str) -> list[CalEvent]:
-        cals = [self._pick(calendar)] if calendar else self._calendars()
-        found: list[CalEvent] = []
-        for cal in cals:
+        An iCloud account routinely carries five or more calendars, and each
+        search is its own HTTP round-trip to Apple. Sequentially that is five
+        round-trips added to a turn that is already waiting on a rate-limited
+        model — which is most of why reading the calendar felt slow, and why it
+        sometimes outlived the request altogether.
+        """
+        cals = await asyncio.to_thread(
+            lambda: [self._pick(calendar)] if calendar else self._calendars()
+        )
+
+        async def search(cal):
+            name = self._name_of(cal)
             try:
-                results = cal.search(start=start, end=end, event=True, expand=True)
+                results = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        cal.search, start=start, end=end, event=True, expand=True
+                    ),
+                    timeout=CALENDAR_SEARCH_TIMEOUT,
+                )
+            except TimeoutError:
+                # One slow calendar must not cost the whole answer. Shared and
+                # subscribed calendars are the usual offenders.
+                log.warning("Calendar %s timed out after %ss", name, CALENDAR_SEARCH_TIMEOUT)
+                return []
             except Exception as exc:
-                log.warning("Search failed on calendar %s: %s", self._name_of(cal), exc)
-                continue
-            for item in results:
-                parsed = self._parse(item, self._name_of(cal))
-                if parsed:
-                    found.append(parsed)
+                log.warning("Search failed on calendar %s: %s", name, exc)
+                return []
+            return [p for p in (self._parse(i, name) for i in results) if p]
+
+        found: list[CalEvent] = []
+        for chunk in await asyncio.gather(*(search(c) for c in cals)):
+            found.extend(chunk)
         found.sort(key=lambda e: e.start)
         return found
 

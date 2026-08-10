@@ -57,7 +57,10 @@ def _apply_meridiem(start_text: str, start_dt: dt.datetime, title: str):
             },
             "end": {
                 "type": "string",
-                "description": "End of range. Defaults to 7 days after start.",
+                "description": (
+                    "End of the range. Defaults to one day after start, so omit it for "
+                    "'today' or 'tomorrow' and pass it for 'this week' or 'next month'."
+                ),
             },
             "calendar": {"type": "string", "description": "Optional calendar name to restrict to."},
         },
@@ -69,7 +72,10 @@ def _apply_meridiem(start_text: str, start_dt: dt.datetime, title: str):
 async def calendar_list(start: str, end: str = "", calendar: str = "", ctx: ToolContext = None):
     tz = ctx.timezone if ctx else get_settings().timezone
     start_dt = parse_when(start, tz, default_hour=0)
-    end_dt = parse_when(end, tz, default_hour=23) if end else start_dt + dt.timedelta(days=7)
+    # One day unless a range was asked for. Defaulting to a week meant "what's
+    # on today" searched seven days across every calendar — several round-trips
+    # to Apple and a wall of events to filter, for a question about one day.
+    end_dt = parse_when(end, tz, default_hour=23) if end else start_dt + dt.timedelta(days=1)
     if end_dt <= start_dt:
         end_dt = start_dt + dt.timedelta(days=1)
 

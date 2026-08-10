@@ -256,3 +256,35 @@ async def test_update_moves_the_event_rather_than_replacing_it(fake_calendar, re
     uid, kwargs = fake_calendar.updated[0]
     assert uid == "abc@jarvis"
     assert kwargs["start"].hour == 16
+
+
+async def test_a_single_day_question_does_not_search_a_week(fake_calendar, registry):
+    """Defaulting to seven days meant "what's on today" made several round-trips
+    to Apple and filtered a week of events to answer about one day."""
+    from jarvis.tools.calendar_tool import calendar_list
+
+    seen = {}
+
+    async def record(start, end, calendar=""):
+        seen["span"] = (end - start).days
+        return []
+
+    fake_calendar.events_between = record
+    await calendar_list(start="today", ctx=ToolContext(timezone="America/New_York"))
+
+    assert seen["span"] == 1
+
+
+async def test_an_explicit_range_is_still_honoured(fake_calendar, registry):
+    from jarvis.tools.calendar_tool import calendar_list
+
+    seen = {}
+
+    async def record(start, end, calendar=""):
+        seen["span"] = (end - start).days
+        return []
+
+    fake_calendar.events_between = record
+    await calendar_list(start="today", end="next week", ctx=ToolContext(timezone="America/New_York"))
+
+    assert seen["span"] >= 6
