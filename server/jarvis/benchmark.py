@@ -593,6 +593,12 @@ async def main() -> int:
                 print(f"    {DIM}Its free tier may be closed to new accounts.{RESET}")
                 print(f"    {DIM}Clear it: bash scripts/setkey.sh {key_setting} ''{RESET}")
 
+    # Remembered so the pool can put the working ones first without anyone
+    # having to reorder settings by hand.
+    from .llm.health import record
+
+    record(rows)
+
     usable = [r for r in rows if r.get("tools_large")]
     print()
     if usable:

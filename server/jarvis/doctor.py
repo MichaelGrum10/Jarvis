@@ -173,6 +173,14 @@ async def _check_pool(report: Report) -> None:
             state = f"cooling {entry['cooling_for']}s after {because}"
         report.ok(f"  {entry['label']}", f"key {entry['key']}, {state}")
 
+    from .llm.health import describe
+
+    ranked = describe()
+    if ranked:
+        report.ok("Measured order", "from the last benchmark run")
+        for line in ranked.splitlines()[:8]:
+            print(f"      {DIM}{line}{RESET}")
+
     try:
         by_provider = await client.list_models_by_provider()
     except Exception as exc:

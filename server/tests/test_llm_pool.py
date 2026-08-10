@@ -1227,3 +1227,23 @@ async def test_a_fully_retired_pool_does_not_wait_for_nothing():
         assert "Capacity returns" not in str(caught.value)
     finally:
         await client.aclose()
+
+
+def test_any_provider_can_carry_a_list_of_models():
+    """One key reaches a whole catalogue. Listing several models behind it is
+    several independent chances to answer for the cost of one signup."""
+    pool = build_pool(settings(
+        nvidia_api_key="nvapi-x",
+        nvidia_model="meta/llama-3.3-70b-instruct, qwen/qwen2.5-72b, deepseek-ai/deepseek-r1",
+    ))
+
+    nvidia = [e for e in pool.endpoints if e.label.startswith("nvidia:")]
+    assert len(nvidia) == 3
+    assert [e.model for e in nvidia] == [
+        "meta/llama-3.3-70b-instruct", "qwen/qwen2.5-72b", "deepseek-ai/deepseek-r1"
+    ]
+
+
+def test_a_single_model_still_works_unchanged():
+    pool = build_pool(settings(nvidia_api_key="nvapi-x", nvidia_model="only/one"))
+    assert len([e for e in pool.endpoints if e.label.startswith("nvidia:")]) == 1

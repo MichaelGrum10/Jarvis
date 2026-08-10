@@ -261,6 +261,12 @@ def build_pool(settings) -> Pool:
     for provider in _extra_providers(settings):
         pool.add(provider)
 
+    # Measured health first, then the stated preference — so the user's primary
+    # still leads, and within every group the endpoints known to work come
+    # before the ones known not to.
+    from .health import rank
+
+    pool.endpoints = rank(pool.endpoints)
     return _prioritise(pool, settings.primary_provider)
 
 
@@ -301,7 +307,7 @@ def _extra_providers(settings) -> list[Endpoint]:
     independent uptime, and unambiguously within each provider's terms.
     """
     out: list[Endpoint] = []
-    for key_raw, base_url, model, name in (
+    for key_raw, base_url, model_raw, name in (
         (settings.cerebras_api_key, settings.cerebras_base_url, settings.cerebras_model, "cerebras"),
         (settings.openrouter_api_key, settings.openrouter_base_url, settings.openrouter_model, "openrouter"),
         (settings.together_api_key, settings.together_base_url, settings.together_model, "together"),
@@ -317,11 +323,19 @@ def _extra_providers(settings) -> list[Endpoint]:
         # The custom slot is the only one that can be half-filled, since it has
         # no defaults to fall back on. A key with no URL would otherwise build an
         # endpoint that fails on every request with a confusing error.
-        if not base_url or not model:
+        if not base_url or not model_raw:
             continue
-        for index, key in enumerate(split_keys(key_raw)):
-            suffix = f" #{index + 1}" if index else ""
-            out.append(
-                Endpoint(model=model, api_key=key, base_url=base_url, label=f"{name}:{model}{suffix}")
-            )
+        # Every provider takes a comma-separated list, not just Groq. One
+        # NVIDIA key reaches a whole catalogue, and listing four models behind
+        # it is four independent chances to answer for the cost of one signup.
+        models = [m.strip() for m in str(model_raw).split(",") if m.strip()]
+        for model in models:
+            for index, key in enumerate(split_keys(key_raw)):
+                suffix = f" #{index + 1}" if index else ""
+                out.append(
+                    Endpoint(
+                        model=model, api_key=key, base_url=base_url,
+                        label=f"{name}:{model}{suffix}",
+                    )
+                )
     return out

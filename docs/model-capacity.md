@@ -1,5 +1,41 @@
 # Getting more capacity (and a better model)
 
+## Many endpoints from few signups
+
+A key usually reaches a catalogue, not a model. One NVIDIA key covers dozens of
+models; every provider setting therefore takes a comma-separated list, and each
+entry becomes an independent endpoint:
+
+```bash
+bash scripts/setkey.sh NVIDIA_API_KEY nvapi-yourkey
+bash scripts/setkey.sh NVIDIA_MODEL meta/llama-3.3-70b-instruct,qwen/qwen2.5-72b,deepseek-ai/deepseek-r1
+docker compose up -d
+```
+
+That is three chances to answer for the cost of one signup. Two things to be
+clear about before stacking them up.
+
+**Models on one key share that key's quota.** Ten models behind one account is
+resilience against a retired or overloaded *model*, not ten times the
+allowance. Independent per-minute budgets come from separate providers, and
+only from separate providers.
+
+**Several accounts at one provider is a different matter.** Most free tiers
+prohibit it. `GROQ_API_KEYS` exists for people who legitimately hold more than
+one, not as a way to multiply a free tier.
+
+## Letting the measurements choose the order
+
+`python -m jarvis.benchmark` now writes what it found, and the pool reads it:
+endpoints measured failing tool calls go last, and among the working ones the
+faster go first. An endpoint never measured stays where it is — "not yet
+tested" is not evidence against it.
+
+Rankings come only from a benchmark you run, and expire after a fortnight. A
+provider that was broken this morning may be fine now, and reordering which
+model answers on the strength of an old latency sample is not something that
+should happen quietly.
+
 ## Providers worth trying, and what happened to each
 
 Measured on a real free account, not quoted from a comparison page — several of
