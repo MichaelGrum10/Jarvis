@@ -132,7 +132,18 @@ class Agent:
         log.info("%s", describe_selection(user_message, available, selected))
         tool_schemas = [t.schema() for t in selected]
 
+        # Spent across the whole turn, not per call. Eight steps each allowed
+        # their own wait is minutes of silence, and the browser gives up long
+        # before that — the user sees "Load failed", which is worse than the
+        # error waiting was meant to avoid.
+        waits: list[float] = []
+        budget = self.settings.llm_turn_wait_budget_seconds
+
+        def note_wait(seconds: float, _label: str) -> None:
+            waits.append(seconds)
+
         for step in range(1, MAX_STEPS + 1):
+            remaining = max(0.0, budget - sum(waits))
             # The client waits for a cooling endpoint rather than failing, which
             # without this is a silent pause indistinguishable from a hang — and
             # a silent pause is what makes people reload and spend the scarce
@@ -151,7 +162,9 @@ class Agent:
                     )
 
             try:
-                response = await self.llm.complete(messages, tool_schemas)
+                response = await self.llm.complete(
+                    messages, tool_schemas, on_wait=note_wait, wait_budget=remaining
+                )
             except LLMError as exc:
                 await record_failure("llm_error", str(exc), request=user_message)
                 yield AgentEvent("error", {"message": str(exc), "step": step})

@@ -302,6 +302,7 @@ class GroqClient:
         max_tokens: int | None = None,
         force_json: bool = False,
         on_wait: Any = None,
+        wait_budget: float | None = None,
         _retried_after_wait: bool = False,
     ) -> LLMResponse:
         retried_after_wait = _retried_after_wait
@@ -320,7 +321,10 @@ class GroqClient:
         # self-inflicted outage. Wait for it instead — but only briefly, because
         # a minute of silence is worse than a clear message.
         if not candidates:
-            if await self._wait_for_capacity(self.settings.llm_wait_seconds, on_wait):
+            ceiling = self.settings.llm_wait_seconds
+            if wait_budget is not None:
+                ceiling = min(ceiling, wait_budget)
+            if await self._wait_for_capacity(ceiling, on_wait):
                 candidates = self._candidates(model, messages)
 
         errors: list[str] = []
@@ -426,11 +430,13 @@ class GroqClient:
                 if mid_turn
                 else self.settings.llm_retry_wait_seconds
             )
+            if wait_budget is not None:
+                ceiling = min(ceiling, wait_budget)
             if await self._wait_for_capacity(ceiling, on_wait):
                 return await self.complete(
                     messages, tools, model=model, temperature=temperature,
                     max_tokens=max_tokens, force_json=force_json, on_wait=on_wait,
-                    _retried_after_wait=True,
+                    wait_budget=wait_budget, _retried_after_wait=True,
                 )
 
         raise LLMError(self._exhausted_message(errors))

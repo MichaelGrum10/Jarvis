@@ -161,10 +161,17 @@ class Settings(BaseSettings):
     # An error saying "try again in 15s" is worse than waiting 15s, so these are
     # generous — but they are settings rather than constants so the test suite
     # can set them to zero and not spend a minute asleep.
-    llm_wait_seconds: float = 20.0
-    llm_retry_wait_seconds: float = 25.0
+    # No single gap may outlast the browser's patience: past roughly twenty
+    # seconds of silence the connection is dropped and the user sees "Load
+    # failed", which is worse than the error the wait was meant to avoid.
+    llm_wait_seconds: float = 18.0
+    llm_retry_wait_seconds: float = 15.0
     # Higher once tools have run: failing then discards completed work.
-    llm_retry_wait_mid_turn_seconds: float = 45.0
+    llm_retry_wait_mid_turn_seconds: float = 18.0
+    # And a ceiling for the whole turn. A turn is up to eight model calls, so
+    # per-call limits alone permit minutes of waiting — which is not slow, it
+    # is broken.
+    llm_turn_wait_budget_seconds: float = 30.0
     llm_max_tokens: int = 4096
     llm_temperature: float = 0.3
     # Whisper on Groq: free with the same key, and better than the browser engines.

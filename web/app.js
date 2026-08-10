@@ -340,6 +340,13 @@ async function send(text) {
           if (chip) {
             chip.className = `act ${event.ok ? 'ok' : 'err'}`;
             chip.textContent = event.ok ? prettyTool(event.tool) : `${prettyTool(event.tool)} failed`;
+            // "Reading calendar failed" says nothing about why. The reason is
+            // already in the event; showing it on tap turns a dead end into
+            // something reportable without reading the server log.
+            if (!event.ok && event.error) {
+              chip.title = event.error;
+              chip.onclick = () => { chip.textContent = event.error.slice(0, 160); };
+            }
           }
           if (event.display) displays.push(event.display);
         } else if (event.type === 'final') {

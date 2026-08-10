@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from jarvis.agent.loop import Agent, history_from_rows
-from jarvis.llm.client import LLMResponse, ToolCall
+from jarvis.llm.client import LLMError, LLMResponse, ToolCall
 
 
 class FakeLLM:
@@ -147,3 +147,27 @@ async def test_history_drops_tool_noise():
     ]
     history = history_from_rows(rows)
     assert history == [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+
+
+async def test_waiting_is_capped_across_the_whole_turn(monkeypatch):
+    """Eight steps each allowed their own wait is minutes of silence, and the
+    browser drops the connection long before that — the user sees "Load failed",
+    which is worse than the error waiting was meant to avoid."""
+    from jarvis.agent.loop import Agent
+
+    agent = Agent()
+    budget = agent.settings.llm_turn_wait_budget_seconds
+    seen: list[float | None] = []
+
+    async def record(messages, tools=None, **kwargs):
+        seen.append(kwargs.get("wait_budget"))
+        raise LLMError("nothing available")
+
+    monkeypatch.setattr(agent.llm, "complete", record)
+
+    async for _ in agent.stream("hello"):
+        pass
+
+    assert seen, "the loop must pass a budget at all"
+    assert seen[0] is not None
+    assert seen[0] <= budget
