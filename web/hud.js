@@ -334,3 +334,113 @@ export function chunkForSpeech(text, limit = 200) {
   if (current.trim()) chunks.push(current.trim());
   return chunks;
 }
+
+/* ---------------- HUD panels ----------------
+ *
+ * Rendered from /api/hud, which reads the integrations and cache directly and
+ * never touches the model. That is the whole reason a live dashboard is
+ * affordable here: refreshing through the agent would spend a full turn — system
+ * prompt, tool schemas, several round-trips — every minute, against a
+ * per-minute token budget that one booking already strains.
+ */
+
+const PANEL_REFRESH_MS = 60_000;
+
+function pct(value) {
+  if (value === null || value === undefined) return '';
+  const rounded = Number(value).toFixed(2);
+  return `${value >= 0 ? '▲' : '▼'} ${Math.abs(rounded)}%`;
+}
+
+function row(left, right, cls = '') {
+  return `<div class="hud-row ${cls}"><span>${left}</span><span>${right}</span></div>`;
+}
+
+/** Amber for stale, red for down — and stale keeps showing its last value.
+ * A blank panel and a stale one look identical while meaning opposite things. */
+function markStatus(name, panel) {
+  const dot = document.querySelector(`.dot-status[data-for="${name}"]`);
+  if (!dot) return;
+  dot.className = `dot-status ${panel?.status === 'ok' ? '' : panel?.status || 'down'}`;
+  dot.title = panel?.status === 'stale'
+    ? `Last updated ${Math.round((panel.age || 0) / 60)} min ago`
+    : panel?.error || 'Live';
+}
+
+function renderMarkets(markets) {
+  markStatus('markets', markets);
+  if (!markets || markets.status === 'down') {
+    return `<div class="hud-empty">Markets unavailable${
+      markets?.error ? ` — ${esc(markets.error)}` : ''}</div>`;
+  }
+  const quote = (q) => row(
+    esc(q.symbol),
+    `<span class="${(q.change_percent || 0) >= 0 ? 'up' : 'down'}">${
+      q.price ?? '—'} ${pct(q.change_percent)}</span>`
+  );
+  const age = markets.status === 'stale'
+    ? `<div class="hud-age">${Math.round(markets.age / 60)} min old</div>` : '';
+  const alerts = (markets.alerts || []).length
+    ? `<div class="hud-row down">⚠ ${markets.alerts.map((a) => esc(a.symbol)).join(', ')} moving hard</div>`
+    : '';
+  return age
+    + (markets.indices || []).map(quote).join('')
+    + ((markets.indices || []).length ? '<hr style="border-color:rgba(80,200,255,.12);margin:6px 0">' : '')
+    + (markets.watchlist || []).map(quote).join('')
+    + alerts;
+}
+
+function renderBriefing(data) {
+  markStatus('calendar', data.calendar);
+  const quote = data.quote
+    ? `<div class="hud-quote">“${esc(data.quote.text)}”<cite>— ${esc(data.quote.source)}</cite></div>`
+    : '';
+
+  const events = (data.calendar?.events || []).map((e) => row(
+    esc((e.start || '').slice(11, 16)),
+    esc(e.summary || ''),
+    e.imminent ? 'imminent' : ''
+  )).join('') || '<div class="hud-empty">Nothing scheduled</div>';
+
+  const inbox = (data.inbox?.messages || []).map((m) => row(
+    esc(m.from), `<span class="sub">${esc(m.subject)}</span>`
+  )).join('') || '<div class="hud-empty">Inbox clear</div>';
+
+  const texts = (data.messages?.messages || []).map((m) => row(
+    esc(m.from), `<span class="sub">${esc(m.text)}</span>`
+  )).join('');
+
+  return `${quote}
+    <h3 style="margin-top:12px">Next</h3>${events}
+    <h3 style="margin-top:12px">Inbox</h3>${inbox}
+    ${texts ? `<h3 style="margin-top:12px">Messages</h3>${texts}` : ''}`;
+}
+
+function esc(text) {
+  return String(text ?? '').replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+}
+
+export function startHudPanels(api) {
+  const markets = document.querySelector('#panel-markets .panel-body');
+  const briefing = document.querySelector('#panel-briefing .panel-body');
+  if (!markets || !briefing) return () => {};
+
+  let timer = null;
+  const refresh = async () => {
+    try {
+      const data = await api('/api/hud');
+      markets.innerHTML = renderMarkets(data.markets);
+      briefing.innerHTML = renderBriefing(data);
+    } catch (err) {
+      // The panels keep whatever they last showed. Blanking them on a network
+      // blip would lose real information to report a temporary one.
+      markStatus('markets', { status: 'down', error: err.message });
+      markStatus('calendar', { status: 'down', error: err.message });
+    }
+  };
+
+  refresh();
+  timer = setInterval(refresh, PANEL_REFRESH_MS);
+  return () => clearInterval(timer);
+}

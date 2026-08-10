@@ -104,6 +104,19 @@
 
     <div id="hud-status" class="hud-status">Tap to speak</div>
 
+    <!-- Panels flank the reactor on a wide screen and stack under it on a
+         phone. They refresh on their own timers and never call the model. -->
+    <div class="hud-panels">
+      <section class="hud-panel" id="panel-markets">
+        <h3>Markets <span class="dot-status" data-for="markets"></span></h3>
+        <div class="panel-body"></div>
+      </section>
+      <section class="hud-panel" id="panel-briefing">
+        <h3>Briefing <span class="dot-status" data-for="calendar"></span></h3>
+        <div class="panel-body"></div>
+      </section>
+    </div>
+
     <div class="hud-actions">
       <button id="hud-enroll" class="hud-btn">Enrol voice</button>
       <button id="hud-exit" class="hud-btn">Text mode</button>

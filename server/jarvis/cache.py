@@ -42,6 +42,17 @@ TTLS = {
     "news": 600.0,
     "places": 86_400.0,
     "search": 900.0,
+    # HUD panels refresh on their own schedule — a person glances at a dashboard
+    # rather than interrogating it. The `_last` variants never expire: they are
+    # the fallback shown with an age when a refresh fails.
+    "hud_markets": 60.0,
+    "hud_calendar": 300.0,
+    "hud_inbox": 120.0,
+    "hud_messages": 120.0,
+    "hud_markets_last": 86_400.0,
+    "hud_calendar_last": 86_400.0,
+    "hud_inbox_last": 86_400.0,
+    "hud_messages_last": 86_400.0,
 }
 DEFAULT_TTL = 120.0
 

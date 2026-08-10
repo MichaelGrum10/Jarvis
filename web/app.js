@@ -9,7 +9,7 @@
  */
 
 import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice } from '/static/hud.js';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js';
 
 const API = '';
 const store = {
@@ -619,8 +619,19 @@ async function loadRuns() {
 
 /* ---------------- voice ---------------- */
 
+let stopHudPanels = null;
+
 function applyMode() {
   const voice = mode === 'voice';
+  // Panels poll on a timer, so they run only while the HUD is on screen. Left
+  // running in text mode they would keep hitting iCloud and Yahoo for a display
+  // nobody is looking at.
+  if (voice && !stopHudPanels) {
+    stopHudPanels = startHudPanels(api);
+  } else if (!voice && stopHudPanels) {
+    stopHudPanels();
+    stopHudPanels = null;
+  }
   // In voice mode the HUD takes the whole screen: no transcript, no composer,
   // no message list. You already know what you said, and reading a reply you are
   // simultaneously being told is just noise.

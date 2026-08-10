@@ -196,6 +196,11 @@ class Settings(BaseSettings):
     bridge_token: str = Field("", description="Shared secret between server and Mac bridge")
     bridge_stale_minutes: int = 15
 
+    # --- HUD ---
+    # What the markets panel watches. Comma separated; indices are added
+    # automatically and don't belong here.
+    watchlist: str = "AAPL,NVDA,MSFT,TSLA,GOOGL"
+
     # --- search / news ---
     searxng_url: str = ""  # e.g. http://searxng:8080 — free, self-hosted, no key
     brave_api_key: str = ""  # optional fallback, free tier
