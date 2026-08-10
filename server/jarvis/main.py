@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import (
@@ -127,7 +127,49 @@ if WEB_DIR.is_dir():
 
     @app.get("/")
     async def index():
-        return FileResponse(WEB_DIR / "index.html")
+        # Never cached. It is the entry point and it carries the recovery code,
+        # so a stale copy cannot be repaired by anything the app itself does —
+        # the fix lives inside the file that is stuck.
+        return FileResponse(
+            WEB_DIR / "index.html",
+            headers={"Cache-Control": "no-store, must-revalidate"},
+        )
+
+    @app.get("/reset")
+    async def reset():
+        """A page that empties every cache and unregisters the service worker.
+
+        The escape hatch for a browser holding files it will not let go of. It
+        depends on nothing already cached, so it works when the app itself
+        cannot start — which is exactly when it is needed.
+        """
+        return HTMLResponse(
+            """<!doctype html><meta charset=utf-8>
+<title>Resetting Jarvis</title>
+<style>body{background:#0b0f14;color:#cfe6ff;font:15px/1.5 -apple-system,sans-serif;
+padding:40px 24px;text-align:center}</style>
+<h2>Clearing cached files…</h2><p id=s>Working.</p>
+<script>
+(async function () {
+  var out = [];
+  try {
+    if (window.caches) {
+      var keys = await caches.keys();
+      await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+      out.push(keys.length + ' cache(s) cleared');
+    }
+    if (navigator.serviceWorker) {
+      var regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(function (r) { return r.unregister(); }));
+      out.push(regs.length + ' worker(s) removed');
+    }
+  } catch (e) { out.push('error: ' + e.message); }
+  document.getElementById('s').textContent = out.join(', ') + ' — reopening…';
+  setTimeout(function () { location.replace('/?reset=' + Date.now()); }, 1200);
+})();
+</script>""",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/manifest.webmanifest")
     async def manifest():

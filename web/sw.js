@@ -1,7 +1,7 @@
 /* Service worker: makes Jarvis installable and keeps the shell available offline.
  * API calls are never cached — stale calendar data is worse than an error. */
 
-const CACHE = 'jarvis-shell-v10';
+const CACHE = 'jarvis-shell-v11';
 const SHELL = [
   '/', '/static/app.js', '/static/voice.js', '/static/hud.js',
   '/static/style.css', '/static/hud.css', '/manifest.webmanifest',
@@ -22,6 +22,9 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (url.pathname.startsWith('/api/') || event.request.method !== 'GET') return;
+  // /reset exists to escape a bad cache. Serving it from cache would be a joke
+  // at the user's expense.
+  if (url.pathname === '/reset') return;
 
   // Scripts are revalidated on every load. They import each other, so a stale
   // one paired with a fresh one breaks the whole app with an import error —

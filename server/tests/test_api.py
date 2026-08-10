@@ -185,3 +185,23 @@ def test_the_hud_export_the_app_imports_actually_exists():
             assert re.search(pattern, source), (
                 f"app.js imports {name} from {match.group(2)}.js, which does not export it"
             )
+
+
+def test_the_entry_document_is_never_cached(client):
+    """It carries the recovery code, so a stale copy cannot repair itself — the
+    fix lives inside the file that is stuck."""
+    response = client.get("/")
+
+    assert "no-store" in response.headers.get("cache-control", "")
+
+
+def test_reset_depends_on_nothing_already_cached(client):
+    """The escape hatch has to work when the app itself will not start, which is
+    exactly when the caches are the problem."""
+    response = client.get("/reset")
+
+    assert response.status_code == 200
+    assert "no-store" in response.headers.get("cache-control", "")
+    body = response.text
+    assert "caches.delete" in body
+    assert "unregister" in body
