@@ -280,6 +280,13 @@ class AutonomyEngine:
             emit(result.summary)
             return result
 
+        # Remembered so the checkout can be put back. Leaving the repository on
+        # the work branch hijacks the user's own copy: their next `git pull`
+        # asks the remote for a branch that only exists locally, and fails with
+        # "couldn't find remote ref".
+        _, original = await self._git(root, "rev-parse", "--abbrev-ref", "HEAD")
+        original = original.strip()
+
         branch = await self._create_branch(root, goal, emit)
         if not branch:
             result.summary = (
@@ -303,6 +310,7 @@ class AutonomyEngine:
             except LLMError as exc:
                 result.summary = f"Model error: {exc}"
                 emit(result.summary)
+                await self._restore_branch(root, original, emit)
                 break
 
             if not response.wants_tools:
@@ -370,7 +378,27 @@ class AutonomyEngine:
             await self._commit(root, goal, emit)
         else:
             emit("No files changed; nothing to commit.")
+        await self._restore_branch(root, original, emit)
         return result
+
+    async def _restore_branch(self, root: Path, original: str, emit) -> None:
+        """Put the checkout back where it was, leaving the work branch behind.
+
+        The branch is kept — reviewing it is the whole point of `propose` — but
+        the working tree belongs to the user. Left on the work branch, their next
+        update asks the remote for a branch that exists only locally and fails
+        with "couldn't find remote ref", which looks like GitHub being down.
+        """
+        if not original or original == "HEAD":
+            return
+        code, out = await self._git(root, "checkout", original)
+        if code != 0:
+            emit(
+                f"Could not return the checkout to {original}: {out.strip()[:160]}. "
+                f"Run: git checkout {original}"
+            )
+        else:
+            emit(f"Checkout returned to {original}.")
 
     async def _execute(self, sandbox: Sandbox, name: str, args: dict) -> str:
         try:

@@ -26,6 +26,26 @@ fail() { printf "${RED}%s${RESET}\n" "$1" >&2; exit 1; }
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)" || fail "Not a git checkout."
 BEFORE="$(git rev-parse HEAD)"
 
+# A branch that exists only here has no remote to fetch from, and asking for one
+# fails in a way that reads as GitHub being down. Self-improvement creates
+# exactly such branches, so this is the likely reason for landing on one.
+if ! git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+  printf "${RED}You're on a branch that doesn't exist on GitHub: %s${RESET}\n" "$BRANCH" >&2
+  case "$BRANCH" in
+    jarvis/auto/*)
+      printf "${DIM}That's a self-improvement work branch. Review it, then:${RESET}\n" >&2
+      printf "  git log -p %s\n" "$BRANCH" >&2
+      ;;
+  esac
+  # `|| true` because set -e takes the exit status of the substitution, and a
+  # repository with no origin/HEAD would otherwise kill the script here — one
+  # line before the advice it exists to print.
+  MAIN="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || true)"
+  printf "${DIM}Return to your own branch and re-run:${RESET}\n" >&2
+  printf "  git checkout %s && bash scripts/update.sh\n" "${MAIN:-claude/jarvis-ai-assistant-9tlgu3}" >&2
+  exit 1
+fi
+
 say "Fetching $BRANCH…"
 # Fetch and merge as separate steps. Combined, any failure looks like a network
 # failure — and the most common one isn't: a locally modified tracked file makes

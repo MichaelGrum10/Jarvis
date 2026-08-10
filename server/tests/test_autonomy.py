@@ -103,3 +103,36 @@ async def test_refuses_when_target_is_not_a_git_repo(tmp_path):
         assert result.files_changed == []
     finally:
         settings.autonomy_enabled = False
+
+
+async def test_the_checkout_is_returned_after_a_run(tmp_path, monkeypatch):
+    """Leaving the repository on the work branch hijacks the user's own copy:
+    their next update asks the remote for a branch that exists only locally and
+    fails with "couldn't find remote ref", which reads as GitHub being down."""
+    import subprocess
+
+    from jarvis.agent.autonomy import AutonomyEngine
+
+    def git(*args):
+        return subprocess.run(
+            ["git", "-C", str(tmp_path), *args], capture_output=True, text=True, check=False
+        )
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "t@t")
+    git("config", "user.name", "T")
+    (tmp_path / "f.txt").write_text("x")
+    git("add", "-A")
+    git("commit", "-qm", "base")
+
+    engine = AutonomyEngine()
+    logs: list[str] = []
+    branch = await engine._create_branch(tmp_path, "fix something", logs.append)
+    assert branch
+
+    await engine._restore_branch(tmp_path, "main", logs.append)
+
+    on = git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    assert on == "main", "the working tree belongs to the user"
+    # The branch is kept: reviewing it is the entire point of propose mode.
+    assert branch in git("branch", "--list", branch).stdout
