@@ -34,3 +34,9 @@ searxng/uwsgi.ini
 # Local compose overrides (written by scripts/self-improve.sh)
 docker-compose.override.yml
 docker-compose.override.yml.bak
+
+# Your notes are yours. The folder is tracked so the default mount exists, but
+# nothing you write in it is — self-improvement pushes branches from this
+# checkout, and a private vault must never ride along.
+/notes/*
+!/notes/README.md

@@ -226,6 +226,11 @@ class Settings(BaseSettings):
     nominatim_url: str = "https://nominatim.openstreetmap.org"
     overpass_url: str = "https://overpass-api.de/api/interpreter"
 
+    # --- notes: a folder of markdown (an Obsidian vault, or anything shaped
+    # like one). Read from disk, so syncing it is git's or iCloud's problem,
+    # not ours. Empty means the notes tools stay hidden.
+    notes_dir: str = ""
+
     # --- voice identity ---
     # A filter, not a security boundary: it stops other people in the room being
     # answered, and tells you when someone tried. A recording of you will pass it.
@@ -288,6 +293,7 @@ class Settings(BaseSettings):
             # A boolean, not a credential — but it gates its tools the same way,
             # so the model is never offered a browser the image may not contain.
             "browser": [("BROWSER_ENABLED", self.browser_enabled)],
+            "notes": [("NOTES_DIR", self.notes_dir)],
             "auth": [("AUTH_SECRET", self.auth_secret), ("ACCESS_PASSWORD", self.access_password)],
         }
         return [name for name, value in needs.get(feature, []) if not value]

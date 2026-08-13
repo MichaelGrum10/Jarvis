@@ -275,3 +275,91 @@ html, body {
   transition: opacity .2s, transform .2s;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- knowledge galaxy ---------- */
+/* Full-screen and black behind the canvas: any panel chrome showing through
+   would flatten the depth the whole view is built to convey. */
+.galaxy {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: radial-gradient(ellipse at 50% 40%, #0d1622 0%, #05080d 70%, #03050a 100%);
+}
+.galaxy.hidden { display: none; }
+.galaxy canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+
+.galaxy-bar {
+  position: absolute;
+  top: calc(10px + var(--safe-t));
+  left: 10px; right: 10px;
+  display: flex; gap: 8px; align-items: center;
+}
+.galaxy-bar input {
+  flex: 1;
+  padding: 11px 14px;
+  background: rgba(18, 24, 34, .82);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 15px;              /* 16px or less zooms the page on iOS focus */
+  outline: none;
+  backdrop-filter: blur(8px);
+}
+.galaxy-bar input:focus { border-color: var(--accent); }
+.galaxy-bar .icon-btn {
+  background: rgba(18, 24, 34, .82);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  width: 42px; height: 42px;
+}
+
+.galaxy-status {
+  position: absolute;
+  left: 50%; bottom: calc(18px + var(--safe-b));
+  transform: translateX(-50%);
+  max-width: 90vw;
+  padding: 8px 14px;
+  background: rgba(10, 16, 24, .78);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+}
+.galaxy-status.hidden { display: none; }
+
+/* The note itself: a sheet on a phone, a column on a desktop. */
+.galaxy-note {
+  position: absolute;
+  right: 0; bottom: 0;
+  width: min(420px, 100%);
+  max-height: 62vh;
+  overflow: auto;
+  padding: 16px 16px calc(16px + var(--safe-b));
+  background: rgba(12, 18, 26, .94);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  border-radius: 16px 0 0 0;
+  backdrop-filter: blur(10px);
+}
+.galaxy-note.hidden { display: none; }
+.galaxy-note h4 { margin: 0 0 2px; font-size: 16px; }
+.galaxy-note .muted { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+.galaxy-note pre {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+}
+
+/* A note card in the chat: the excerpt plus a way into the galaxy. */
+.card .note-open {
+  margin-top: 10px;
+  padding: 8px 14px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 13px;
+}

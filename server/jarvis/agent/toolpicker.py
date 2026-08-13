@@ -73,6 +73,14 @@ DOMAIN_HINTS: dict[str, tuple[str, ...]] = {
         "remember", "forget", "know about me", "my preference", "i like", "i prefer",
         "i always", "note that", "keep in mind", "my name", "my wife", "my husband",
     ),
+    # The vault is a different thing from memory: memory is a handful of facts
+    # about how the user likes things done, notes are everything they have ever
+    # written down. "Remember that…" is deliberately in both — the model picks.
+    "notes": (
+        "note", "notes", "my notes", "wrote down", "write down", "remember that",
+        "my vault", "obsidian", "did i write", "what do i know about", "capture",
+        "jot", "second brain", "knowledge", "galaxy", "according to my",
+    ),
 }
 
 # Always offered: cheap, tiny, and needed constantly. current_time in particular
@@ -82,7 +90,11 @@ ALWAYS = ("current_time", "memory_search", "system_status")
 
 # A request that matches nothing specific still needs to be able to do something
 # useful, so fall back to the domains that answer most general questions.
-FALLBACK_DOMAINS = ("calendar", "mail", "search", "memory")
+# "notes" earns its place here rather than only on a keyword: a question that
+# matched nothing specific — "what's the deal with the Punic Wars" — is exactly
+# the case where the user's own writing should be consulted before the model's
+# training. It costs one schema, and only when a vault is configured.
+FALLBACK_DOMAINS = ("calendar", "mail", "search", "memory", "notes")
 
 MAX_TOOLS = 16
 

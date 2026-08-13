@@ -531,6 +531,44 @@ def check_browser(report: Report) -> None:
         report.ok("Session", f"{detail}, {days:.0f} days left")
 
 
+def check_notes(report: Report) -> None:
+    header("Notes vault")
+    from .notes import get_vault, notes_dir
+
+    settings = get_settings()
+    if not settings.notes_dir:
+        report.ok("Vault", "not configured — the notes tools and the galaxy are off")
+        return
+
+    root = notes_dir()
+    if root is None:
+        # Almost always the mount, not the setting: NOTES_DIR is a path inside
+        # the container, and it only exists if the host folder was mounted there.
+        report.bad(
+            "Vault", f"NOTES_DIR is {settings.notes_dir}, but that folder isn't there",
+            "Check the host side of the mount:\n"
+            "  grep NOTES_HOST_DIR .env   (default: ./notes)\n"
+            "  docker compose up -d",
+        )
+        return
+
+    notes = get_vault().load(force=True)
+    if not notes:
+        report.warn(
+            "Vault", f"{root} is mounted but has no .md files in it",
+            'Drop some markdown in, or say "remember that…" to write the first one.',
+        )
+        return
+
+    folders = len({n.folder for n in notes})
+    links = len(get_vault().graph()["links"])
+    report.ok("Vault", f"{len(notes)} notes in {folders} folder(s), {links} links — {root}")
+
+    captures = root / "captures"
+    if captures.is_dir():
+        report.ok("Captures", f"{len(list(captures.glob('*.md')))} written by Jarvis")
+
+
 async def check_voice(report: Report) -> None:
     header("Voice identity")
     from sqlalchemy import select
@@ -589,6 +627,7 @@ async def main() -> int:
     await check_messages(report)
     await check_voice(report)
     check_browser(report)
+    check_notes(report)
     await check_outbound(report)
 
     print()

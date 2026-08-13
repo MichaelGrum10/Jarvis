@@ -90,6 +90,18 @@ def build_system_prompt(
         location_line=location_line,
     )
 
+    if not settings.missing_for("notes"):
+        # Said only when a vault exists. Without this the model treats
+        # notes_search as one lookup among many and answers from its own
+        # training instead, which is the failure the vault exists to prevent.
+        prompt += (
+            "\n## Their own notes\nThey keep a vault of markdown notes. When a question is "
+            "about their projects, decisions, people, or anything they have written down, "
+            "search it first with notes_search and answer from what comes back, naming the "
+            "notes you used. If the notes don't cover it, say so before answering from "
+            "general knowledge. 'Remember that…' means notes_remember.\n"
+        )
+
     missing = []
     for feature, label in (
         ("mail", "Email (iCloud IMAP)"),

@@ -8,8 +8,9 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js?v=11';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=11';
+import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js?v=12';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=12';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=12';
 
 const API = '';
 const store = {
@@ -359,6 +360,11 @@ async function send(text) {
 
     typing.remove();
     if (displays.length) renderDisplays(displays);
+  // Answered from the notes while the galaxy is up: fly there without being
+  // asked, which is the whole experience the feature is for.
+  for (const d of displays) {
+    if (d.type === 'notes' && galaxyIsOpen()) galaxyFlyTo(d.notes.map((n) => n.node));
+  }
     const reply = finalText || 'No response.';
     addMessage('assistant', reply);
     if (mode === 'voice') speakReply(reply);
@@ -471,6 +477,26 @@ function renderCard(d) {
         <div class="r-title"><a href="${esc(a.link || a.url)}" target="_blank" rel="noopener">${esc(a.title)}</a></div>
         <div class="r-sub">${esc((a.summary || a.snippet || '').slice(0, 120))}</div></div></div>`);
     }
+  } else if (d.type === 'notes') {
+    card.appendChild(el('h4', null, `Notes \u00b7 ${esc(d.query || '')}`));
+    for (const n of d.notes.slice(0, 8)) {
+      rows.push(`<div class="row"><div class="r-main">
+        <div class="r-title">${esc(n.title)}</div>
+        <div class="r-sub">${esc(n.folder)} \u00b7 ${esc((n.excerpt || '').slice(0, 110))}</div></div></div>`);
+    }
+    // The dive is the point of the galaxy, so the card that names the sources
+    // is where it has to be offered.
+    const open = el('button', 'note-open', '\u2727 Show these in the galaxy');
+    open.onclick = () => openGalaxy(d.notes.map((n) => n.node));
+    card.insertAdjacentHTML('beforeend', rows.join(''));
+    card.appendChild(open);
+    return card;
+  } else if (d.type === 'note_created') {
+    card.appendChild(el('h4', null, 'Noted'));
+    rows.push(`<div class="row"><div class="r-main"><div class="r-title">${esc(d.title)}</div>
+      <div class="r-sub">Written to your notes.</div></div></div>`);
+    // A new star exists now; the next open should see it.
+    galaxyInvalidate();
   } else if (d.type === 'device_action') {
     card.appendChild(el('h4', null, 'Device'));
     rows.push(`<div class="row"><div class="r-main"><div class="r-title">${esc(d.action)}</div></div></div>`);
@@ -1219,6 +1245,9 @@ $('skills-btn').onclick = showSkills;
 $('cookies-btn').onclick = showBrowserSession;
 $('voice-btn').onclick = showVoicePicker;
 $('hud-btn').onclick = () => { closeDrawer(); setMode('voice'); };
+initGalaxy({ api });
+$('galaxy-btn').onclick = () => { closeDrawer(); openGalaxy(); };
+$('hud-galaxy').onclick = () => openGalaxy();
 $('modal-close').onclick = () => $('modal').classList.add('hidden');
 $('modal').onclick = (e) => { if (e.target === $('modal')) $('modal').classList.add('hidden'); };
 

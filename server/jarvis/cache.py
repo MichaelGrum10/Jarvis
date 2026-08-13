@@ -53,6 +53,10 @@ TTLS = {
     "hud_calendar_last": 86_400.0,
     "hud_inbox_last": 86_400.0,
     "hud_messages_last": 86_400.0,
+    # The vault's own index catches file changes by mtime, so this only avoids
+    # re-walking the link set for a viewer that reloads. Short, because a note
+    # captured by voice should appear as a new star without waiting.
+    "notes_graph": 30.0,
 }
 DEFAULT_TTL = 120.0
 

@@ -17,11 +17,19 @@ services:
       # Where the self-improvement engine works. Only meaningful with the
       # repo mount that scripts/self-improve.sh adds.
       AUTONOMY_REPO_PATH: /app/repo
+      # The markdown vault, as the container sees it. The host side is
+      # NOTES_HOST_DIR below; only this path ever appears in .env.
+      NOTES_DIR: ${NOTES_DIR:-/notes}
     # Docker's default 64MB of shared memory makes Chromium crash on heavy pages.
     # Harmless when the browser is off; costs nothing until used.
     shm_size: 256m
     volumes:
       - jarvis-data:/data
+      # Your notes. Defaults to ./notes in this checkout so the feature works
+      # with nothing configured; point NOTES_HOST_DIR at an Obsidian vault (or
+      # any folder of .md files) in .env to use that instead. Read-write,
+      # because "remember that…" writes a new note.
+      - ${NOTES_HOST_DIR:-./notes}:/notes:rw
       # Self-improvement needs a real git repo to branch and commit in, and the
       # image deliberately doesn't contain .git. `bash scripts/self-improve.sh`
       # adds that mount via docker-compose.override.yml — don't add it here, as

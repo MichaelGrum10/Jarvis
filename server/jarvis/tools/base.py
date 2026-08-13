@@ -204,6 +204,7 @@ def load_all_tools() -> ToolRegistry:
         "places_tool",
         "device_tool",
         "memory_tool",
+        "notes_tool",
         "system_tool",
     ]
     for mod in modules:

@@ -34,6 +34,8 @@ def tools():
         ("text Sara I'm late", "messages"),
         ("open spotify", "device"),
         ("remember I prefer aisle seats", "memory"),
+        ("what did I write about the Punic Wars", "notes"),
+        ("check my obsidian vault", "notes"),
     ],
 )
 def test_domain_detection(message, expected):

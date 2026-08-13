@@ -57,6 +57,9 @@ if not source.is_file():
     sys.exit(0)  # Not a full checkout — nothing to validate against.
 
 fields = {m.upper() for m in re.findall(r"^    ([a-z][a-z0-9_]*)\s*:", source.read_text(), re.M)}
+# Read by docker-compose's own interpolation rather than by pydantic, so they
+# are absent from config.py and still perfectly real.
+fields |= {"NOTES_HOST_DIR"}
 name = os.environ["NAME"]
 if not fields or name in fields:
     sys.exit(0)

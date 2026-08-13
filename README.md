@@ -26,10 +26,12 @@ anywhere in the stack.
 | **Open apps on your device** | URL schemes + Apple Shortcuts | free |
 | **Voice** — HUD, wake word, speaks back | Web Speech API + Groq Whisper | free |
 | **Voice identity** — answers only you | MFCC voiceprint, alerts on strangers | free |
+| **Notes** — answers from your own markdown vault | keyword index over a mounted folder | free, no key |
+| **Knowledge galaxy** — 3D view of the vault, flies to sources | canvas, no library | free |
 | **Memory** | SQLite, injected into every prompt | free |
 | **Self-improvement** | Sandboxed agent that edits its own code and runs tests | free |
 
-30 tools, all registered through one plugin-style registry — adding a capability
+34 tools, all registered through one plugin-style registry — adding a capability
 means dropping a file in `server/jarvis/tools/`.
 
 ---
@@ -245,6 +247,34 @@ in [docs/voice-identity.md](docs/voice-identity.md); the basics are in
 
 ---
 
+## Your notes
+
+Point Jarvis at a folder of markdown — an Obsidian vault, an exported Notion, a
+directory you write by hand — and it answers from what *you* wrote rather than
+from what a model half-remembers. The same folder becomes a 3D galaxy: one star
+per note, threads between the ones that reference each other.
+
+- *"What did I write about the Punic Wars?"* → the notes, quoted, named
+- *"Remember that the Oracle box reboots on Sundays"* → a new note, a new star
+- ☰ → **Knowledge galaxy** → drag to orbit, tap a star to read it
+
+Ask by voice with the galaxy open and the camera dives to the notes the answer
+came from, as the answer arrives.
+
+The default mount is `./notes` in this checkout, so it works with nothing
+configured. To use an existing vault:
+
+```bash
+bash scripts/setkey.sh NOTES_HOST_DIR /home/ubuntu/vault
+docker compose up -d
+```
+
+Search is keyword overlap with titles weighted, not embeddings — a deliberate
+trade against a free-tier token budget, explained along with everything else in
+**[docs/notes.md](docs/notes.md)**.
+
+---
+
 ## Running out of capacity
 
 Free tiers meter tokens per minute, and one turn here carries ~30 tool schemas —
@@ -350,11 +380,12 @@ server/jarvis/
     loop.py        the tool-calling loop, SSE events
     prompts.py     system prompt
     autonomy.py    self-improvement engine + sandbox
-  tools/           30 tools, one file per domain
+  notes.py         markdown vault: index, search, graph, capture
+  tools/           34 tools, one file per domain
   api/voice.py     Whisper transcription endpoint
   integrations/    iCloud CalDAV + IMAP
   api/             auth, chat, device, bridge, autonomy routes
-web/               installable PWA (app.js, voice.js)
+web/               installable PWA (app.js, voice.js, galaxy.js)
 bridge/            Mac iMessage bridge (stdlib only)
 ```
 

@@ -20,6 +20,7 @@ from .api import (
     device,
     hud,
     identity,
+    notes,
     skills,
     voice,
 )
@@ -89,6 +90,7 @@ app.include_router(identity.router)
 app.include_router(skills.router)
 app.include_router(browser.router)
 app.include_router(hud.router)
+app.include_router(notes.router)
 
 
 @app.get("/api/health")

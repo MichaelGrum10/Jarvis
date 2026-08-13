@@ -10,8 +10,8 @@
 <title>Jarvis</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/style.css?v=11">
-<link rel="stylesheet" href="/static/hud.css?v=11">
+<link rel="stylesheet" href="/static/style.css?v=12">
+<link rel="stylesheet" href="/static/hud.css?v=12">
 </head>
 <body>
 
@@ -49,6 +49,7 @@
     <div id="conv-list" class="conv-list"></div>
     <div class="drawer-foot">
       <button id="hud-btn" class="ghost-btn">◎ Open HUD (voice)</button>
+      <button id="galaxy-btn" class="ghost-btn">✧ Knowledge galaxy</button>
       <button id="skills-btn" class="ghost-btn">✦ Skills</button>
       <button id="cookies-btn" class="ghost-btn">🍪 Browser session</button>
       <button id="voice-btn" class="ghost-btn">🔊 Voice</button>
@@ -119,6 +120,7 @@
 
     <div class="hud-actions">
       <button id="hud-enroll" class="hud-btn">Enrol voice</button>
+      <button id="hud-galaxy" class="hud-btn">Galaxy</button>
       <button id="hud-exit" class="hud-btn">Text mode</button>
     </div>
   </div>
@@ -141,6 +143,20 @@
     <textarea id="input" rows="1" placeholder="Ask Jarvis…" autocomplete="off"></textarea>
     <button id="send" type="submit" aria-label="Send">↑</button>
   </form>
+</div>
+
+<!-- The galaxy sits above everything: it is a place you go, not a panel you
+     glance at, and it has to own the whole screen to read as depth. -->
+<div id="galaxy" class="galaxy hidden">
+  <canvas id="galaxy-canvas"></canvas>
+  <div class="galaxy-bar">
+    <input id="galaxy-search" type="search" placeholder="Search your notes…"
+           autocomplete="off" autocapitalize="none">
+    <button id="galaxy-reset" class="icon-btn" title="Show everything">⤢</button>
+    <button id="galaxy-close" class="icon-btn" aria-label="Close galaxy">✕</button>
+  </div>
+  <div id="galaxy-status" class="galaxy-status hidden"></div>
+  <div id="galaxy-note" class="galaxy-note hidden"></div>
 </div>
 
 <div id="modal" class="modal hidden">
@@ -212,6 +228,6 @@
   });
 })();
 </script>
-<script type="module" src="/static/app.js?v=11"></script>
+<script type="module" src="/static/app.js?v=12"></script>
 </body>
 </html>
