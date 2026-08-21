@@ -9,6 +9,7 @@ the timescale of someone typing, not of someone opening the HUD.
 
 from __future__ import annotations
 
+import random
 from collections import deque
 
 from fastapi import APIRouter, HTTPException
@@ -204,4 +205,68 @@ async def summary(device: CurrentDevice):
         "notes": len(notes),
         "folders": len({n.folder for n in notes}),
         "configured": True,
+    }
+
+
+# Canned rather than generated, deliberately. A confirmation is not worth a
+# round trip on a metered free tier — it would cost roughly what answering a
+# real question costs, to say "saved". Swap in a model call here if you would
+# rather have infinite variety than instant, free acknowledgements.
+CONFIRMATIONS = [
+    "Noted, sir. Filed where you will never look for it.",
+    "Written down, sir. Your memory is safe with me.",
+    "Consider it remembered, sir.",
+    "Duly recorded. One more star in the firmament.",
+    "Noted. I shall pretend to be surprised when you ask.",
+    "Filed, sir — alphabetically, since you did not ask.",
+]
+
+
+class Memo(BaseModel):
+    text: str
+
+
+@router.post("/remember")
+async def remember(device: CurrentDevice, body: Memo):
+    """Write a note into captures/, and say where it belongs in the graph.
+
+    The viewer needs somewhere to be born: a node that appears at the origin and
+    drifts outward reads as a glitch, while one that appears beside the note it
+    relates to reads as the vault growing. So the closest existing note is
+    returned by title — a title survives the renumbering that inserting a node
+    causes, and an index does not.
+    """
+    text = body.text.strip()
+    if len(text) < 3:
+        raise HTTPException(400, "Nothing to record.")
+    if vault.notes_dir() is None:
+        raise HTTPException(404, "No notes folder configured.")
+
+    store = vault.get_vault()
+    try:
+        note = store.capture(text)
+    except vault.NotesError as exc:
+        raise HTTPException(400, str(exc)) from None
+    except OSError as exc:
+        raise HTTPException(500, f"Could not write the note: {exc}") from None
+
+    # Closest existing note by the same ranking the answers use, excluding the
+    # one just written — it would otherwise always win against its own text.
+    near = None
+    for other, score in store.search(text, limit=3):
+        if other.index != note.index and score >= MIN_SCORE:
+            near = other.title
+            break
+
+    return {
+        "reply": random.choice(CONFIRMATIONS),
+        "note": {
+            "id": note.index,
+            "label": note.title,
+            "group": note.folder,
+            "excerpt": note.excerpt,
+            "path": str(note.path),
+        },
+        "near": near,
+        "generation": store.signature(),
     }

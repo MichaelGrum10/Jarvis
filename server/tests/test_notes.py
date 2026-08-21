@@ -8,6 +8,8 @@ star — a wrong answer that looks exactly like a right one.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from jarvis import notes as notes_mod
@@ -446,3 +448,56 @@ def test_summary_is_calm_about_no_vault(api, monkeypatch):
     monkeypatch.setattr(notes_mod, "notes_dir", lambda: None)
     body = api.get("/api/notes/summary").json()
     assert body == {"notes": 0, "folders": 0, "configured": False}
+
+
+# --- capture durability, which Syncthing depends on ---
+
+
+def test_captures_are_written_atomically(vault, tmp_path, monkeypatch):
+    """This folder is watched by Syncthing. A plain write is observable
+    half-finished, and a truncated note propagating to every other device looks
+    like data loss rather than a race. So the file must appear complete or not
+    at all — which means a rename, never a write in place."""
+    seen = []
+    real_replace = notes_mod.os.replace
+
+    def watched(src, dst):
+        # At the moment of the rename the destination must not yet exist, and
+        # the source must already hold the whole note.
+        seen.append((Path(src).name, Path(dst).name, Path(src).read_text()))
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(notes_mod.os, "replace", watched)
+    note = vault.capture("Remember that the Oracle box reboots on Sundays")
+
+    assert seen, "no rename happened — the write was not atomic"
+    src, dst, content = seen[0]
+    assert src.startswith(".") and src.endswith(".tmp"), f"temp file was {src!r}"
+    assert dst == f"{note.title}.md"
+    assert "reboots on Sundays" in content, "the temp file must be complete before the rename"
+
+
+def test_the_temp_file_never_survives(vault, tmp_path):
+    vault.capture("Something worth keeping")
+    leftovers = list((tmp_path / "captures").glob(".*"))
+    assert leftovers == [], f"temp files left behind: {leftovers}"
+
+
+def test_repeated_captures_count_upwards_and_never_overwrite(vault, tmp_path):
+    """The old code stamped the time and tried once, so two captures in the
+    same second overwrote each other."""
+    made = [vault.capture("Standing note about Fridays") for _ in range(4)]
+    titles = [n.title for n in made]
+
+    assert len(set(titles)) == 4, f"names collided: {titles}"
+    for note in made:
+        assert (tmp_path / "captures" / f"{note.title}.md").exists()
+    # And every one still holds its own content rather than the last writer's.
+    assert len(list((tmp_path / "captures").glob("*.md"))) == 4
+
+
+def test_a_title_that_is_illegal_as_a_filename_is_made_safe(vault, tmp_path):
+    note = vault.capture("Ratio: profit / loss <target> for Q3")
+    assert "/" not in note.title and ":" not in note.title
+    assert not note.title.startswith(".")
+    assert (tmp_path / "captures" / f"{note.title}.md").exists()

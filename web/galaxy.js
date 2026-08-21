@@ -19,7 +19,7 @@
  * and is unreachable from a phone without an SSH tunnel.
  */
 
-const LIB = '/static/vendor/3d-force-graph.min.js?v=17';
+const LIB = '/static/vendor/3d-force-graph.min.js?v=18';
 
 let graph = null;          // the ForceGraph3D instance
 let deps = { api: null };
@@ -37,6 +37,14 @@ let starTimer = null;
    An answer synthesised from six notes is not "about" any single one of them,
    and picking one to open would misrepresent where it came from. */
 const CLUSTER_AT = 4;
+
+/* "remember that…" is a command, not a question. Matched on the client so it
+   never spends a model call deciding what it plainly is. */
+const REMEMBER = /^\s*(?:jarvis[,\s]+)?(?:please\s+)?remember\s+that\b[:,\s]*/i;
+const PULSE_MS = 1600;
+
+let pulseUntil = 0;        // node id -> glowing until this timestamp
+let pulseNode = null;
 let generation = '';   // which graph the browser is holding
 let session = '';      // per-tab, so follow-up questions have context
 
@@ -170,12 +178,19 @@ function build(data) {
     .nodeRelSize(5)
     // Longer notes are bigger stars — variety from something real rather than
     // from a random number.
-    .nodeVal((n) => 1 + Math.min(6, (n.size || (n.excerpt || '').length) / 160))
+    .nodeVal((n) => {
+      const base = 1 + Math.min(6, (n.size || (n.excerpt || '').length) / 160);
+      // A newly captured note swells and settles, so you can see it arrive.
+      if (n.id !== pulseNode) return base;
+      const left = Math.max(0, pulseUntil - Date.now()) / PULSE_MS;
+      return base * (1 + 2.6 * left);
+    })
     .nodeOpacity(0.95)
     .nodeResolution(12)
     .nodeColor((n) => {
       const h = hues[n.group];
       if (selected === null && !highlight.size) return `hsl(${h}, 78%, 66%)`;
+      if (n.id === pulseNode && Date.now() < pulseUntil) return '#ffffff';
       if (n.id === selected) return '#ffffff';
       if (highlight.has(n.id)) return `hsl(${h}, 95%, 74%)`;
       return `hsla(${h}, 30%, 40%, 0.28)`;
@@ -373,6 +388,21 @@ async function askVault() {
   if (!question) return;
 
   send.disabled = true;
+
+  if (REMEMBER.test(question)) {
+    const memo = question.replace(REMEMBER, '').trim();
+    renderAnswer('Writing that down…', null, null, false);
+    try {
+      await rememberThat(memo || question);
+      input.value = '';
+    } catch (err) {
+      renderAnswer(err.message, null, null, true);
+    } finally {
+      send.disabled = false;
+    }
+    return;
+  }
+
   renderAnswer('Reading your notes…', null, null, false);
 
   try {
@@ -399,6 +429,70 @@ async function askVault() {
   }
 }
 
+
+
+/**
+ * Write a note and grow the galaxy around it, without a reload.
+ *
+ * The graph is refetched rather than patched locally, because inserting a note
+ * renumbers every node after it — ids are array positions — and a viewer
+ * holding stale numbering would fly to the wrong star on the next answer. The
+ * refetch is invisible: existing nodes keep their coordinates because the same
+ * objects are handed back to the library, so nothing jumps. Only the new one
+ * moves, and it starts life beside the note it relates to.
+ */
+async function rememberThat(text) {
+  const res = await deps.api('/api/notes/remember', {
+    method: 'POST',
+    body: JSON.stringify({ text }),
+  });
+
+  renderAnswer(res.reply, [], null, false);
+  deps.speak?.(res.reply);
+
+  if (!graph) return;
+
+  // Where the new star should be born: beside its closest relative, so it
+  // appears to grow out of the vault rather than fall into it from nowhere.
+  const anchor = res.near ? [...byId.values()].find((n) => n.label === res.near) : null;
+
+  const fresh = await deps.api('/api/notes/graph?refresh=true');
+  const previous = new Map([...byId.values()].map((n) => [n.label, n]));
+
+  for (const node of fresh.nodes) {
+    const old = previous.get(node.label);
+    if (old && Number.isFinite(old.x)) {
+      // Carry the settled position over, so the whole galaxy doesn't reshuffle
+      // around one addition.
+      node.x = old.x; node.y = old.y; node.z = old.z;
+      node.vx = 0; node.vy = 0; node.vz = 0;
+    } else if (anchor && Number.isFinite(anchor.x)) {
+      node.x = anchor.x + 12; node.y = anchor.y + 12; node.z = anchor.z + 12;
+    }
+  }
+
+  generation = fresh.generation || '';
+  graph.graphData(fresh);
+  byId = new Map(fresh.nodes.map((n) => [n.id, n]));
+  neighbours = new Map(fresh.nodes.map((n) => [n.id, new Set()]));
+  for (const link of fresh.links) {
+    const [a, b] = ends(link);
+    if (neighbours.has(a)) neighbours.get(a).add(b);
+    if (neighbours.has(b)) neighbours.get(b).add(a);
+  }
+
+  const born = fresh.nodes.find((n) => n.label === res.note.label);
+  if (!born) return;
+
+  pulseNode = born.id;
+  pulseUntil = Date.now() + PULSE_MS;
+  const beat = setInterval(repaint, 60);
+  setTimeout(() => { clearInterval(beat); pulseNode = null; repaint(); }, PULSE_MS);
+
+  // Let the layout settle a beat before chasing it, or the camera aims at a
+  // coordinate the node has already left.
+  setTimeout(() => select(born), 350);
+}
 
 /**
  * Show where an answer came from.

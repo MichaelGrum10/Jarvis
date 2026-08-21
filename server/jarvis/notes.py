@@ -279,16 +279,35 @@ class Vault:
         # root-owned from a capture written before this was fixed, and the
         # directory's ownership is the half that blocks Syncthing.
         self._match_owner(folder, root)
+        # Count upwards rather than stamping the time. Two captures in the same
+        # second produced the same stamp, and the old code only tried once —
+        # the second one silently overwrote the first.
         path = folder / f"{safe}.md"
-        if path.exists():
-            path = folder / f"{safe} {dt.datetime.now().strftime('%H%M%S')}.md"
+        for suffix in range(2, 1000):
+            if not path.exists():
+                break
+            path = folder / f"{safe} {suffix}.md"
 
         now = dt.datetime.now().astimezone()
-        path.write_text(
-            f"---\ncreated: {now.isoformat()}\ntags: [capture]\nsource: jarvis\n---\n\n{text}\n",
-            encoding="utf-8",
+        body = (
+            f"---\ncreated: {now.isoformat()}\ntags: [capture]\nsource: jarvis\n---\n\n{text}\n"
         )
-        self._match_owner(path, root)
+
+        # Written to a temporary name and renamed over the top, because this
+        # folder is watched by Syncthing. A plain write is observable
+        # half-finished, and Syncthing would propagate a truncated note to every
+        # other device — where it looks like data loss rather than a race.
+        # os.replace is atomic within a filesystem, and the temporary lives in
+        # the same directory to guarantee that. The leading dot keeps it out of
+        # the index even in the instant it exists.
+        tmp = folder / f".{path.name}.tmp"
+        try:
+            tmp.write_text(body, encoding="utf-8")
+            self._match_owner(tmp, root)
+            os.replace(tmp, path)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
         self.load(force=True)
         log.info("Captured note %s", path.name)
         return next(n for n in self._notes if n.path.name == path.name)

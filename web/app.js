@@ -8,9 +8,9 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=17';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=17';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=17';
+import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=18';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=18';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=18';
 
 const API = '';
 const store = {
