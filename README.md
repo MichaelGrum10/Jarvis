@@ -391,6 +391,49 @@ bridge/            Mac iMessage bridge (stdlib only)
 
 ---
 
+## Decisions
+
+A running log of choices that are easy to forget and expensive to rediscover.
+Each one records what was chosen *and what it rules out*, because the second
+half is what saves you the next time it looks wrong.
+
+**Host — Oracle Cloud, Ubuntu 24.04.** Architecture is whatever `uname -m`
+reports on the instance: `aarch64` on the Ampere shapes, `x86_64` otherwise.
+It matters for Docker image tags, any downloaded binary, and Chromium. Confirm
+it before assuming — a shell on your laptop or in a build container will
+happily report the wrong one.
+
+**Two firewalls, not one.** Instance `iptables` *and* the VCN Security List in
+the Oracle console. Both must pass, and both fail as a silent timeout. The
+console half cannot be done from the shell:
+Networking → Virtual Cloud Networks → your VCN → Security Lists → Add Ingress
+Rules.
+
+**Never `iptables -A INPUT`.** Oracle's Ubuntu image ends the INPUT chain with
+a catch-all `REJECT ... icmp-host-prohibited`. Appending puts the new rule
+*below* it, where it can never match — the command succeeds, the port stays
+shut, and nothing says why. Insert above it (`-I INPUT <n>`, from
+`--line-numbers`) and persist with `netfilter-persistent save`. Rules live in
+`/etc/iptables/rules.v4`; `ufw` is deliberately not layered on top, per
+Oracle's own guidance.
+
+**Notes live in `./notes`, mounted at `/notes`.** One folder of markdown, read
+from disk. `NOTES_DIR` is the container path and does not change;
+`NOTES_HOST_DIR` repoints the host side at a real vault. The folder's contents
+are gitignored — self-improvement pushes branches from this checkout, and a
+private vault must never ride along.
+
+**Note search is keyword overlap, not embeddings.** Embeddings would cost a
+model call per note on every reindex, against a budget where one calendar
+booking already spends most of a minute's tokens. Revisit only when a vault
+gets big enough that overlap actually misses.
+
+**The galaxy is hand-rolled canvas, not a 3D library.** No WebGL, nothing from
+a CDN, so it works with the phone offline and cannot break the app the way a
+mismatched cached module can. Cost: ~300 lines of projection maths.
+
+---
+
 ## Security
 
 One password guards everything, so treat it like a house key.
