@@ -10,8 +10,8 @@
 <title>Jarvis</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/style.css?v=12">
-<link rel="stylesheet" href="/static/hud.css?v=12">
+<link rel="stylesheet" href="/static/style.css?v=13">
+<link rel="stylesheet" href="/static/hud.css?v=13">
 </head>
 <body>
 
@@ -148,7 +148,11 @@
 <!-- The galaxy sits above everything: it is a place you go, not a panel you
      glance at, and it has to own the whole screen to read as depth. -->
 <div id="galaxy" class="galaxy hidden">
-  <canvas id="galaxy-canvas"></canvas>
+  <!-- Two layers: a 2D starfield beneath, the WebGL graph above it with a
+       transparent background. Keeping the backdrop out of three.js means a
+       library upgrade can't take it with it. -->
+  <canvas id="galaxy-stars"></canvas>
+  <div id="galaxy-graph"></div>
   <div class="galaxy-bar">
     <input id="galaxy-search" type="search" placeholder="Search your notes…"
            autocomplete="off" autocapitalize="none">
@@ -228,6 +232,6 @@
   });
 })();
 </script>
-<script type="module" src="/static/app.js?v=12"></script>
+<script type="module" src="/static/app.js?v=13"></script>
 </body>
 </html>

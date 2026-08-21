@@ -1,442 +1,381 @@
-/* The knowledge galaxy: every note a star, every link between them a thread.
+/* The knowledge galaxy: every note a star, every reference a thread.
  *
- * Drawn on a 2D canvas with a hand-rolled perspective projection rather than
- * WebGL or a graph library. Three reasons, in order of weight:
+ * Rendered with 3d-force-graph (WebGL), vendored into web/vendor/ rather than
+ * pulled from a CDN. Three reasons, and the first is not negotiable: this app
+ * is served from the user's own box behind their own password, and a CDN tag
+ * would hand a third party a request every time the galaxy is opened. The
+ * second is the service worker — an offline-capable PWA cannot depend on
+ * unpkg being reachable. The third is that we have already lost an evening to
+ * a CDN-shaped failure this month.
  *
- *  1. Nothing may be fetched from a CDN. This runs on the user's own server and
- *     has to work with the phone offline, so a library would have to be vendored
- *     and kept in step by hand — for a few hundred lines of maths.
- *  2. A few thousand points is nowhere near where canvas struggles. The cost
- *     here is the depth sort, not the fill.
- *  3. Sorted painting gives depth fade and haze for free, which is most of what
- *     makes a point cloud read as a galaxy rather than as confetti.
+ * The 1.3MB bundle is loaded lazily, on first open, for the same reason the
+ * tool schemas are trimmed per turn: most sessions never open the galaxy, and
+ * paying a megabyte at startup to make a rare action faster is the wrong
+ * trade on a phone.
  *
- * The layout is not a full force simulation: n-body repulsion over a whole vault
- * is O(n²) per frame and would melt a phone. Folders become clusters placed on a
- * sphere, notes sit in a ball around their folder, and only the links pull. The
- * structure you see is therefore honest about folders and honest about links,
- * and does not pretend to be a global energy minimum.
+ * Data comes live from /api/notes/graph, which is authenticated and always
+ * current. That is the whole reason this lives in the app rather than beside
+ * it: the standalone viewer renders a snapshot you have to rebuild by hand,
+ * and is unreachable from a phone without an SSH tunnel.
  */
 
-const TAU = Math.PI * 2;
-const LINK_BUDGET = 1400;      // lines drawn per frame before the faintest are cut
-const LABEL_BUDGET = 28;       // titles on screen at once, nearest first
-const RELAX_STEPS = 220;
+const LIB = '/static/vendor/3d-force-graph.min.js?v=13';
 
-/* ---------------- layout ---------------- */
+let graph = null;          // the ForceGraph3D instance
+let deps = { api: null };
+let loaded = false;        // graph data fetched
+let libPromise = null;
+let byId = new Map();
+let neighbours = new Map();
+let selected = null;
+let highlight = new Set();
+let pendingFly = null;     // ids to fly to once the layout has coordinates
+let fitted = false;        // whether the opening zoom-to-fit has happened
+let starTimer = null;
 
-function fibonacciSphere(count, radius) {
-  // Even spread without clumping at the poles, which a naive random spherical
-  // pick gives you.
-  const out = [];
-  const golden = Math.PI * (3 - Math.sqrt(5));
-  for (let i = 0; i < count; i++) {
-    const y = count === 1 ? 0 : 1 - (i / (count - 1)) * 2;
-    const r = Math.sqrt(Math.max(0, 1 - y * y));
-    const theta = golden * i;
-    out.push({ x: Math.cos(theta) * r * radius, y: y * radius, z: Math.sin(theta) * r * radius });
-  }
-  return out;
+function $(id) { return document.getElementById(id); }
+
+export function initGalaxy(options) { deps = options; }
+
+/* ---------------- lazy library load ---------------- */
+
+function loadLibrary() {
+  if (window.ForceGraph3D) return Promise.resolve();
+  if (libPromise) return libPromise;
+
+  libPromise = new Promise((resolve, reject) => {
+    const tag = document.createElement('script');
+    tag.src = LIB;
+    tag.onload = () => (window.ForceGraph3D ? resolve() : reject(new Error('library loaded but defined nothing')));
+    tag.onerror = () => reject(new Error('could not load the 3D library from this server'));
+    document.head.appendChild(tag);
+  });
+  return libPromise;
 }
 
-function hashHue(text) {
+/* ---------------- starfield ---------------- */
+/* A plain 2D canvas behind a transparent WebGL canvas. Not three.js points:
+   doing it this way means a breaking change in the graph library cannot take
+   the background with it, and it costs nothing to run. */
+
+function startStars() {
+  const canvas = $('galaxy-stars');
+  const ctx = canvas.getContext('2d');
+  let stars = [];
+
+  function seed() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = window.innerWidth, h = window.innerHeight;
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    stars = [];
+    // Three parallax layers. The slow one reads as distance; the fast one is
+    // what makes the drift legible at all.
+    for (const layer of [
+      { n: 220, v: 0.006, r: 0.7, a: 0.40 },
+      { n: 110, v: 0.017, r: 1.1, a: 0.60 },
+      { n: 40,  v: 0.034, r: 1.6, a: 0.90 },
+    ]) {
+      for (let i = 0; i < layer.n; i++) {
+        stars.push({
+          x: Math.random() * w, y: Math.random() * h,
+          r: layer.r * (0.6 + Math.random() * 0.8),
+          a: layer.a * (0.5 + Math.random() * 0.5),
+          v: layer.v, t: Math.random() * Math.PI * 2,
+        });
+      }
+    }
+  }
+
+  function draw(now) {
+    const w = window.innerWidth, h = window.innerHeight;
+    ctx.clearRect(0, 0, w, h);
+    for (const s of stars) {
+      s.x -= s.v;
+      if (s.x < -2) { s.x = w + 2; s.y = Math.random() * h; }
+      const a = s.a * (0.75 + 0.25 * Math.sin(now * 0.001 + s.t));
+      ctx.fillStyle = `rgba(200, 225, 255, ${a.toFixed(3)})`;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    starTimer = requestAnimationFrame(draw);
+  }
+
+  seed();
+  window.addEventListener('resize', seed);
+  starTimer = requestAnimationFrame(draw);
+}
+
+function stopStars() {
+  if (starTimer) cancelAnimationFrame(starTimer);
+  starTimer = null;
+}
+
+/* ---------------- helpers ---------------- */
+
+function hueOf(text) {
   let h = 0;
   for (let i = 0; i < text.length; i++) h = (h * 31 + text.charCodeAt(i)) >>> 0;
   return h % 360;
 }
 
-function layout(nodes, links) {
-  const folders = [...new Set(nodes.map((n) => n.group))].sort();
-  const centres = fibonacciSphere(folders.length, folders.length > 1 ? 520 : 0);
-  const centreOf = new Map(folders.map((f, i) => [f, centres[i]]));
-
-  const points = nodes.map((n) => {
-    const c = centreOf.get(n.group);
-    // A deterministic scatter, so the galaxy looks the same every time it is
-    // opened. A random one would reshuffle on every reload and make the shape
-    // impossible to learn.
-    const seed = hashHue(n.label + n.group);
-    const a = (seed % 360) / 360 * TAU;
-    const b = ((seed >> 8) % 360) / 360 * TAU;
-    const r = 40 + ((seed >> 16) % 100) * 1.4;
-    return {
-      x: c.x + Math.cos(a) * Math.sin(b) * r,
-      y: c.y + Math.sin(a) * Math.sin(b) * r,
-      z: c.z + Math.cos(b) * r,
-      hue: hashHue(n.group),
-      node: n,
-    };
-  });
-
-  // Springs on the links, and a weak pull home so a note linked across the vault
-  // does not get dragged out of its own cluster entirely.
-  for (let step = 0; step < RELAX_STEPS; step++) {
-    const rate = 0.06 * (1 - step / RELAX_STEPS);
-    for (const link of links) {
-      const a = points[link.source];
-      const b = points[link.target];
-      if (!a || !b) continue;
-      const dx = b.x - a.x, dy = b.y - a.y, dz = b.z - a.z;
-      const dist = Math.hypot(dx, dy, dz) || 1;
-      const pull = ((dist - 150) / dist) * rate;
-      a.x += dx * pull; a.y += dy * pull; a.z += dz * pull;
-      b.x -= dx * pull; b.y -= dy * pull; b.z -= dz * pull;
-    }
-    for (const p of points) {
-      const c = centreOf.get(p.node.group);
-      p.x += (c.x - p.x) * rate * 0.12;
-      p.y += (c.y - p.y) * rate * 0.12;
-      p.z += (c.z - p.z) * rate * 0.12;
-    }
-  }
-  return points;
+function ends(link) {
+  return [
+    typeof link.source === 'object' ? link.source.id : link.source,
+    typeof link.target === 'object' ? link.target.id : link.target,
+  ];
 }
-
-/* ---------------- the viewer ---------------- */
-
-export class Galaxy {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
-    this.points = [];
-    this.links = [];
-    this.highlight = new Set();
-    this.cam = { yaw: 0.4, pitch: -0.25, dist: 1500, tx: 0, ty: 0, tz: 0 };
-    this.want = { ...this.cam };
-    this.spin = 0.00035;
-    this.running = false;
-    this.onOpen = null;
-    this._bind();
-  }
-
-  load(graph) {
-    this.links = graph.links.map((l) => ({ source: l.source, target: l.target }));
-    this.points = layout(graph.nodes, this.links);
-    this.frame();
-    return this.points.length;
-  }
-
-  /* --- camera --- */
-
-  frame() {
-    // Fit the whole cloud, then sit back far enough that it reads as a volume.
-    let span = 400;
-    for (const p of this.points) span = Math.max(span, Math.hypot(p.x, p.y, p.z));
-    this.want = { yaw: 0.4, pitch: -0.25, dist: span * 2.6, tx: 0, ty: 0, tz: 0 };
-    this.highlight = new Set();
-  }
-
-  /** Dive to a set of nodes — the move the whole thing exists for. */
-  flyTo(ids) {
-    const chosen = ids.map((i) => this.points[i]).filter(Boolean);
-    if (!chosen.length) return false;
-    this.highlight = new Set(ids);
-
-    const mid = chosen.reduce(
-      (acc, p) => ({ x: acc.x + p.x / chosen.length, y: acc.y + p.y / chosen.length, z: acc.z + p.z / chosen.length }),
-      { x: 0, y: 0, z: 0 }
-    );
-    // Far enough back that every highlighted star is still in shot; a dive that
-    // frames one of five answers is worse than no dive.
-    let spread = 120;
-    for (const p of chosen) spread = Math.max(spread, Math.hypot(p.x - mid.x, p.y - mid.y, p.z - mid.z));
-
-    this.want = {
-      yaw: Math.atan2(mid.x, mid.z) + 0.5,
-      pitch: -0.2,
-      dist: Math.max(320, spread * 3.2),
-      tx: mid.x, ty: mid.y, tz: mid.z,
-    };
-    this.start();
-    return true;
-  }
-
-  _project(p) {
-    const c = this.cam;
-    const x = p.x - c.tx, y = p.y - c.ty, z = p.z - c.tz;
-    const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw);
-    const rx = x * cy - z * sy;
-    const rz = x * sy + z * cy;
-    const cp = Math.cos(c.pitch), sp = Math.sin(c.pitch);
-    const ry = y * cp - rz * sp;
-    const depth = y * sp + rz * cp + c.dist;
-    if (depth < 40) return null;
-    const scale = this.focal / depth;
-    return { sx: this.w / 2 + rx * scale, sy: this.h / 2 + ry * scale, depth, scale };
-  }
-
-  /* --- drawing --- */
-
-  resize() {
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const rect = this.canvas.getBoundingClientRect();
-    this.w = rect.width; this.h = rect.height;
-    this.canvas.width = Math.round(this.w * dpr);
-    this.canvas.height = Math.round(this.h * dpr);
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    this.focal = Math.max(this.w, this.h) * 0.9;
-  }
-
-  draw() {
-    const ctx = this.ctx;
-    ctx.clearRect(0, 0, this.w, this.h);
-    if (!this.points.length) return;
-
-    const seen = new Array(this.points.length);
-    let far = 1, near = Infinity;
-    for (let i = 0; i < this.points.length; i++) {
-      const p = (seen[i] = this._project(this.points[i]));
-      if (!p) continue;
-      if (p.depth > far) far = p.depth;
-      if (p.depth < near) near = p.depth;
-    }
-    const range = Math.max(1, far - near);
-
-    // Threads first, behind every star, and faint: the links are context, and a
-    // dense vault turns into a ball of wool if they compete with the nodes.
-    ctx.lineWidth = 1;
-    let drawn = 0;
-    for (const link of this.links) {
-      if (drawn >= LINK_BUDGET) break;
-      const a = seen[link.source], b = seen[link.target];
-      if (!a || !b) continue;
-      const lit = this.highlight.has(link.source) || this.highlight.has(link.target);
-      const fade = 1 - (Math.min(a.depth, b.depth) - near) / range;
-      ctx.strokeStyle = lit
-        ? `rgba(120, 230, 255, ${0.30 + fade * 0.35})`
-        : `rgba(110, 160, 210, ${0.04 + fade * 0.10})`;
-      ctx.beginPath();
-      ctx.moveTo(a.sx, a.sy);
-      ctx.lineTo(b.sx, b.sy);
-      ctx.stroke();
-      drawn++;
-    }
-
-    // Back to front, so near stars paint over far ones and the haze reads.
-    const order = [];
-    for (let i = 0; i < seen.length; i++) if (seen[i]) order.push(i);
-    order.sort((i, j) => seen[j].depth - seen[i].depth);
-
-    const labels = [];
-    for (const i of order) {
-      const p = seen[i];
-      const point = this.points[i];
-      const lit = this.highlight.has(i);
-      const fade = 1 - (p.depth - near) / range;
-      const r = Math.max(1, (2.2 + Math.min(3, (point.node.size || 0) / 900)) * p.scale * 260);
-
-      ctx.beginPath();
-      ctx.arc(p.sx, p.sy, Math.min(r, 26), 0, TAU);
-      ctx.fillStyle = lit
-        ? '#9ff2ff'
-        : `hsla(${point.hue}, 70%, ${52 + fade * 22}%, ${0.25 + fade * 0.7})`;
-      ctx.fill();
-
-      if (lit) {
-        ctx.beginPath();
-        ctx.arc(p.sx, p.sy, Math.min(r, 26) + 7, 0, TAU);
-        ctx.strokeStyle = 'rgba(120, 230, 255, 0.85)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-      if (lit || (labels.length < LABEL_BUDGET && p.scale * 260 > 1.6)) {
-        labels.push({ p, label: point.node.label, lit });
-      }
-    }
-
-    ctx.font = '11px ui-monospace, SFMono-Regular, Menlo, monospace';
-    ctx.textAlign = 'center';
-    for (const { p, label, lit } of labels.slice(0, LABEL_BUDGET + this.highlight.size)) {
-      ctx.fillStyle = lit ? 'rgba(200, 245, 255, 0.95)' : 'rgba(190, 210, 230, 0.45)';
-      ctx.fillText(label.slice(0, 34), p.sx, p.sy - 12);
-    }
-  }
-
-  step() {
-    if (!this.running) return;
-    const c = this.cam, w = this.want;
-    // Eased chase rather than a scripted tween: a new flyTo mid-flight just
-    // changes the target, and the camera never jumps.
-    for (const k of ['yaw', 'pitch', 'dist', 'tx', 'ty', 'tz']) {
-      c[k] += (w[k] - c[k]) * 0.075;
-    }
-    if (!this.dragging) { c.yaw += this.spin; w.yaw += this.spin; }
-    this.draw();
-    requestAnimationFrame(() => this.step());
-  }
-
-  start() {
-    if (this.running) return;
-    this.running = true;
-    this.resize();
-    requestAnimationFrame(() => this.step());
-  }
-
-  stop() { this.running = false; }
-
-  /* --- input --- */
-
-  _bind() {
-    const canvas = this.canvas;
-    let last = null, moved = 0, pinch = 0;
-
-    const pointAt = (cx, cy) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = cx - rect.left, y = cy - rect.top;
-      let best = null, bestDist = 22;
-      for (let i = 0; i < this.points.length; i++) {
-        const p = this._project(this.points[i]);
-        if (!p) continue;
-        const d = Math.hypot(p.sx - x, p.sy - y);
-        if (d < bestDist) { bestDist = d; best = i; }
-      }
-      return best;
-    };
-
-    canvas.addEventListener('pointerdown', (e) => {
-      last = { x: e.clientX, y: e.clientY };
-      moved = 0;
-      this.dragging = true;
-      canvas.setPointerCapture(e.pointerId);
-    });
-
-    canvas.addEventListener('pointermove', (e) => {
-      if (!last) return;
-      const dx = e.clientX - last.x, dy = e.clientY - last.y;
-      moved += Math.abs(dx) + Math.abs(dy);
-      this.want.yaw = this.cam.yaw - dx * 0.006;
-      this.want.pitch = Math.max(-1.4, Math.min(1.4, this.cam.pitch - dy * 0.006));
-      last = { x: e.clientX, y: e.clientY };
-    });
-
-    const release = (e) => {
-      this.dragging = false;
-      // A tap is a click that did not travel. Without the threshold every orbit
-      // gesture would also open whatever note it finished over.
-      if (last && moved < 8) {
-        const hit = pointAt(e.clientX, e.clientY);
-        if (hit !== null && this.onOpen) {
-          this.highlight = new Set([hit]);
-          this.onOpen(this.points[hit].node, hit);
-        }
-      }
-      last = null;
-    };
-    canvas.addEventListener('pointerup', release);
-    canvas.addEventListener('pointercancel', () => { this.dragging = false; last = null; });
-
-    canvas.addEventListener('wheel', (e) => {
-      e.preventDefault();
-      this.want.dist = Math.max(200, Math.min(9000, this.want.dist * (1 + e.deltaY * 0.0015)));
-    }, { passive: false });
-
-    canvas.addEventListener('touchmove', (e) => {
-      if (e.touches.length !== 2) return;
-      e.preventDefault();
-      const gap = Math.hypot(
-        e.touches[0].clientX - e.touches[1].clientX,
-        e.touches[0].clientY - e.touches[1].clientY
-      );
-      if (pinch) this.want.dist = Math.max(200, Math.min(9000, this.want.dist * (pinch / gap)));
-      pinch = gap;
-    }, { passive: false });
-    canvas.addEventListener('touchend', () => { pinch = 0; });
-
-    window.addEventListener('resize', () => { if (this.running) this.resize(); });
-  }
-}
-
-/* ---------------- the overlay around it ---------------- */
-
-let view = null;
-let deps = { api: null };
-let loaded = false;
-
-export function initGalaxy(options) {
-  deps = options;
-}
-
-function $(id) { return document.getElementById(id); }
 
 function status(text) {
   const box = $('galaxy-status');
-  if (box) { box.textContent = text || ''; box.classList.toggle('hidden', !text); }
+  if (!box) return;
+  box.textContent = text || '';
+  box.classList.toggle('hidden', !text);
 }
 
-async function showNote(node, index) {
+/* ---------------- building ---------------- */
+
+function build(data) {
+  const hues = {};
+  for (const n of data.nodes) if (!(n.group in hues)) hues[n.group] = hueOf(n.group);
+
+  // Adjacency from the raw numeric ids, before the library is handed the data:
+  // 3d-force-graph rewrites link.source/target into node objects in place, so
+  // reading them afterwards means handling both shapes forever.
+  byId = new Map(data.nodes.map((n) => [n.id, n]));
+  neighbours = new Map(data.nodes.map((n) => [n.id, new Set()]));
+  for (const link of data.links) {
+    const [a, b] = ends(link);
+    if (neighbours.has(a)) neighbours.get(a).add(b);
+    if (neighbours.has(b)) neighbours.get(b).add(a);
+  }
+
+  graph = window.ForceGraph3D()($('galaxy-graph'))
+    .graphData(data)
+    .backgroundColor('rgba(0,0,0,0)')   // starfield shows through from beneath
+    .showNavInfo(false)
+    .nodeLabel((n) => n.label)
+    .nodeRelSize(5)
+    // Longer notes are bigger stars — variety from something real rather than
+    // from a random number.
+    .nodeVal((n) => 1 + Math.min(6, (n.size || (n.excerpt || '').length) / 160))
+    .nodeOpacity(0.95)
+    .nodeResolution(12)
+    .nodeColor((n) => {
+      const h = hues[n.group];
+      if (selected === null && !highlight.size) return `hsl(${h}, 78%, 66%)`;
+      if (n.id === selected) return '#ffffff';
+      if (highlight.has(n.id)) return `hsl(${h}, 95%, 74%)`;
+      return `hsla(${h}, 30%, 40%, 0.28)`;
+    })
+    .linkColor((l) => {
+      if (selected === null && !highlight.size) return 'rgba(140, 185, 235, 0.32)';
+      const [a, b] = ends(l);
+      const touching = highlight.has(a) || highlight.has(b) || a === selected || b === selected;
+      return touching ? 'rgba(127, 230, 255, 0.85)' : 'rgba(120, 160, 210, 0.05)';
+    })
+    .linkWidth((l) => {
+      const [a, b] = ends(l);
+      return (a === selected || b === selected) ? 1.4 : 0.4;
+    })
+    // Light travelling the threads. Built in, needs no three.js of our own,
+    // and does more for the feel of the thing than anything else here.
+    .linkDirectionalParticles((l) => {
+      const [a, b] = ends(l);
+      return (a === selected || b === selected) ? 4 : 1;
+    })
+    .linkDirectionalParticleWidth(1.5)
+    .linkDirectionalParticleSpeed(0.005)
+    .onNodeClick((n) => select(n))
+    .onBackgroundClick(() => clearSelection());
+
+  graph.d3Force('charge').strength(-140);
+
+  // The library's default cooldown is 15 seconds, and onEngineStop — which is
+  // what triggers the opening framing — does not fire until then. Fifteen
+  // seconds of stars sitting off the edge of the screen is indistinguishable
+  // from a broken viewer. A personal vault settles in well under five.
+  graph.cooldownTime(5000);
+
+  // Nodes have no coordinates until the simulation has run, so a fly-to
+  // requested during loading has to wait for them rather than aim at NaN.
+  //
+  // The same applies to framing. The default camera sits at a fixed distance
+  // that has nothing to do with how big the layout turned out, so a small vault
+  // opens with its stars scattered off the edges of the screen. Fitting once
+  // the simulation settles is what makes it open looking composed.
+  graph.onEngineStop(() => {
+    if (pendingFly) {
+      const ids = pendingFly;
+      pendingFly = null;
+      flyTo(ids);
+      return;
+    }
+    // Once only: the engine restarts on interaction, and re-fitting every time
+    // would yank the camera back while the user is looking at something.
+    if (!fitted) {
+      fitted = true;
+      graph.zoomToFit(900, 110);
+    }
+  });
+
+  // An early frame so it opens looking composed rather than waiting out the
+  // whole cooldown. The authoritative fit still happens at engine stop, by
+  // which time the layout has actually settled; 800ms is long enough for the
+  // first few ticks to have spread the nodes into something worth framing.
+  setTimeout(() => { if (graph && !fitted) graph.zoomToFit(500, 110); }, 800);
+
+  const groups = Object.keys(hues).length;
+  status(`${data.nodes.length} notes · ${groups} cluster${groups === 1 ? '' : 's'} · ${data.links.length} links`);
+}
+
+function repaint() {
+  if (!graph) return;
+  graph.nodeColor(graph.nodeColor())
+       .linkColor(graph.linkColor())
+       .linkWidth(graph.linkWidth())
+       .linkDirectionalParticles(graph.linkDirectionalParticles());
+}
+
+/* ---------------- camera ---------------- */
+
+/* `light` exists because the two callers want different things. A search wants
+   its results lit up, so the camera target and the highlight are the same set.
+   A click wants the node *and its neighbours* lit while flying to the node
+   alone — and an earlier version let flyTo overwrite the highlight the click
+   had just computed, so neighbours were dimmed the instant you selected
+   anything. The whole point of clicking a star is seeing what it connects to. */
+function flyTo(ids, light = true) {
+  if (!graph) return false;
+  const nodes = ids.map((i) => byId.get(i)).filter((n) => n && Number.isFinite(n.x));
+  if (!nodes.length) { pendingFly = ids; return false; }
+
+  if (light) highlight = new Set(ids);
+  const mid = { x: 0, y: 0, z: 0 };
+  for (const n of nodes) { mid.x += n.x / nodes.length; mid.y += n.y / nodes.length; mid.z += n.z / nodes.length; }
+
+  // Far enough back that every highlighted star is in shot — a dive that frames
+  // one of five answers is worse than no dive.
+  let spread = 60;
+  for (const n of nodes) spread = Math.max(spread, Math.hypot(n.x - mid.x, n.y - mid.y, n.z - mid.z));
+
+  const back = Math.max(160, spread * 2.6);
+  const span = Math.hypot(mid.x, mid.y, mid.z) || 1;
+  const ratio = 1 + back / span;
+
+  graph.cameraPosition(
+    { x: mid.x * ratio, y: mid.y * ratio, z: mid.z * ratio },
+    mid,
+    1800
+  );
+  repaint();
+  return true;
+}
+
+function select(node) {
+  selected = node.id;
+  highlight = new Set([node.id, ...(neighbours.get(node.id) || [])]);
+  repaint();
+  flyTo([node.id], false);   // keep the neighbour highlight set above
+  showNote(node);
+}
+
+function clearSelection() {
+  selected = null;
+  highlight = new Set();
+  repaint();
+  $('galaxy-note').classList.add('hidden');
+}
+
+/* ---------------- the note panel ---------------- */
+
+async function showNote(node) {
   const box = $('galaxy-note');
   box.classList.remove('hidden');
-  box.innerHTML = `<h4>${node.label}</h4><p class="muted">${node.group}</p><pre>Loading…</pre>`;
+  box.innerHTML = '';
+
+  const head = document.createElement('h4');
+  head.textContent = node.label;
+  const where = document.createElement('p');
+  where.className = 'muted';
+  where.textContent = `${node.group} · node ${node.id}`;
+  const body = document.createElement('pre');
+  body.textContent = node.excerpt || 'Loading…';
+  const close = document.createElement('button');
+  close.className = 'ghost-btn';
+  close.textContent = 'Close';
+  close.onclick = () => box.classList.add('hidden');
+  box.append(head, where, body, close);
+
   try {
-    const full = await deps.api(`/api/notes/note/${index}`);
-    box.innerHTML = '';
-    const head = document.createElement('h4');
-    head.textContent = full.title;
-    const where = document.createElement('p');
-    where.className = 'muted';
-    where.textContent = full.folder;
-    const body = document.createElement('pre');
-    // textContent, not innerHTML: a note is the user's own writing and may
+    const full = await deps.api(`/api/notes/note/${node.id}`);
+    // textContent, never innerHTML: this is the user's own writing, it may
     // legitimately contain angle brackets, and none of it should ever run.
-    body.textContent = full.text;
-    const close = document.createElement('button');
-    close.className = 'ghost-btn';
-    close.textContent = 'Close';
-    close.onclick = () => box.classList.add('hidden');
-    box.append(head, where, body, close);
+    body.textContent = full.text || '(empty note)';
   } catch (err) {
-    box.querySelector('pre').textContent = `Could not read the note: ${err.message}`;
+    body.textContent = `Could not read the note: ${err.message}`;
   }
 }
 
-/** Open the galaxy, loading the graph the first time. `ids` dives on arrival. */
+/* ---------------- public API ---------------- */
+
 export async function openGalaxy(ids) {
   const shell = $('galaxy');
   shell.classList.remove('hidden');
 
-  if (!view) {
-    view = new Galaxy($('galaxy-canvas'));
-    view.onOpen = showNote;
+  if (!starTimer) startStars();
+
+  if (!graph) {
     $('galaxy-close').onclick = closeGalaxy;
-    $('galaxy-reset').onclick = () => { view.frame(); $('galaxy-note').classList.add('hidden'); };
+    $('galaxy-reset').onclick = () => {
+      clearSelection();
+      if (graph) graph.zoomToFit(1200, 110);
+    };
     $('galaxy-search').addEventListener('keydown', async (e) => {
       if (e.key !== 'Enter') return;
       const q = e.target.value.trim();
       if (!q) return;
       try {
         const { notes } = await deps.api(`/api/notes/search?q=${encodeURIComponent(q)}`);
-        if (!notes.length) return status(`Nothing in the notes matches “${q}”.`);
-        view.flyTo(notes.map((n) => n.node));
-        status(`${notes.length} note${notes.length === 1 ? '' : 's'} · ${notes[0].title}`);
+        if (!notes.length) return status(`Nothing matches “${q}”.`);
+        flyTo(notes.map((n) => n.node));
+        status(`${notes.length} match${notes.length === 1 ? '' : 'es'} · ${notes[0].title}`);
       } catch (err) {
         status(err.message);
       }
     });
   }
 
-  view.start();
-
   if (!loaded) {
     status('Reading your notes…');
     try {
-      const graph = await deps.api('/api/notes/graph');
-      const count = view.load(graph);
+      await loadLibrary();
+      const data = await deps.api('/api/notes/graph');
+      if (!data.nodes.length) return status('No notes in your vault yet.');
+      build(data);
       loaded = true;
-      status(count ? `${count} notes · ${graph.links.length} links` : 'No notes found in your vault yet.');
     } catch (err) {
-      // The likely cause by far is NOTES_DIR being unset, and the endpoint says
-      // exactly that — so show what it said rather than a generic failure.
+      // Far and away the likeliest cause is NOTES_DIR being unset, and the
+      // endpoint says exactly that — so show what it said.
       status(err.message);
       return;
     }
+  } else if (graph) {
+    graph.resumeAnimation();
   }
-  if (ids && ids.length) view.flyTo(ids);
+
+  if (ids && ids.length) flyTo(ids);
 }
 
 export function closeGalaxy() {
   $('galaxy').classList.add('hidden');
   $('galaxy-note').classList.add('hidden');
-  if (view) view.stop();
+  stopStars();
+  // A WebGL scene left rendering behind a hidden div is pure battery drain.
+  if (graph) graph.pauseAnimation();
 }
 
 export function galaxyIsOpen() {
@@ -444,12 +383,16 @@ export function galaxyIsOpen() {
   return shell && !shell.classList.contains('hidden');
 }
 
-/** Dive to notes an answer came from, but only if the user is already looking. */
+/** Dive to the notes an answer came from — but only if the user is looking. */
 export function galaxyFlyTo(ids) {
-  if (view && galaxyIsOpen()) view.flyTo(ids);
+  if (graph && galaxyIsOpen()) flyTo(ids);
 }
 
-/** Drop a freshly captured note in without re-reading the whole vault later. */
+/** A capture added a star; re-fetch the graph on next open. */
 export function galaxyInvalidate() {
   loaded = false;
+  fitted = false;
+  if (graph) { graph._destructor?.(); graph = null; }
+  const host = $('galaxy-graph');
+  if (host) host.innerHTML = '';
 }
