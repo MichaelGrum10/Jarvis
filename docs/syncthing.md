@@ -76,19 +76,49 @@ whatever it is in Finder — `Notes`, `Obsidian`, `vault`.
 
 ## 2. Install on the Mac, running at login
 
+With Homebrew, this is two lines:
+
 ```bash
 brew install syncthing
 brew services start syncthing
 ```
 
-`brew services` registers a LaunchAgent, which is what makes it survive logout
-and reboot. Confirm:
+**But Homebrew needs admin rights** — it calls `sudo` to create its prefix and
+stops dead with *"the user needs to be an Administrator"* on a standard
+account. That is common on a managed or shared Mac, and it is not worth
+fighting. Syncthing publishes official macOS binaries, and a per-user
+LaunchAgent gives the same start-at-login behaviour with no admin at all:
 
 ```bash
-brew services list | grep syncthing      # want: started
+mkdir -p ~/bin ~/Library/LaunchAgents
+URL=$(curl -sL https://api.github.com/repos/syncthing/syncthing/releases/tags/v1.30.0 | grep 'browser_download_url' | grep 'macos-arm64' | cut -d'"' -f4)
+curl -fL -o /tmp/st.zip "$URL"
+mkdir -p /tmp/stx && unzip -o -q /tmp/st.zip -d /tmp/stx
+find /tmp/stx -maxdepth 2 -type f -name syncthing -exec cp {} ~/bin/syncthing \;
+chmod +x ~/bin/syncthing
 ```
 
-The Mac's web UI is now at <http://127.0.0.1:8384>.
+Three details that each cost a round trip to discover:
+
+- macOS assets are **`.zip`**, not `.tar.gz` like the Linux ones.
+- `-maxdepth 2` is load-bearing. The archive also ships `etc/freebsd-rc/syncthing`,
+  an init *script* with the same name, and an unbounded `find` copies that
+  instead. The symptom is `/etc/rc.subr: No such file or directory`.
+- **Match the server's version.** Latest is 2.x while Debian's repo serves
+  1.30; cross-major sync may well work, but a version-skew bug across two
+  machines is expensive to diagnose and free to avoid.
+
+Then the LaunchAgent — note `--no-upgrade`, without which Syncthing updates
+itself to 2.x on its own schedule and reintroduces the skew:
+
+```bash
+printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' '<plist version="1.0"><dict>' '<key>Label</key><string>net.syncthing.syncthing</string>' '<key>ProgramArguments</key><array>' "<string>$HOME/bin/syncthing</string>" '<string>serve</string>' '<string>--no-browser</string>' '<string>--no-upgrade</string>' '</array>' '<key>RunAtLoad</key><true/>' '<key>KeepAlive</key><true/>' '</dict></plist>' > ~/Library/LaunchAgents/net.syncthing.syncthing.plist
+launchctl load ~/Library/LaunchAgents/net.syncthing.syncthing.plist
+curl -s http://127.0.0.1:8384/rest/noauth/health
+```
+
+`{"status":"OK"}` means it is up. The Mac's web UI is at
+<http://127.0.0.1:8384>.
 
 ---
 
