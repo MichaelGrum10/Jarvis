@@ -27,7 +27,7 @@ anywhere in the stack.
 | **Voice** — HUD, wake word, speaks back | Web Speech API + Groq Whisper | free |
 | **Voice identity** — answers only you | MFCC voiceprint, alerts on strangers | free |
 | **Notes** — answers from your own markdown vault | keyword index over a mounted folder | free, no key |
-| **Knowledge galaxy** — 3D view of the vault, flies to sources | canvas, no library | free |
+| **Knowledge galaxy** — 3D vault, ask it questions, flies to sources | WebGL, vendored not CDN | free |
 | **Memory** | SQLite, injected into every prompt | free |
 | **Self-improvement** | Sandboxed agent that edits its own code and runs tests | free |
 
