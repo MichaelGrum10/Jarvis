@@ -453,6 +453,15 @@ problem on the host — it is the free tier's tokens-per-minute ceiling, and the
 fix is another provider or a local endpoint, not a bigger shape. There is no
 swap, so the failure mode under a real spike is the OOM killer, not slowness.
 
+**Local inference was evaluated and rejected.** Ollama is installed on the host
+with `qwen2.5:3b` resident, `llama3` and `qwen2.5:7b` available. It is not
+wired into the pool and should not be: inference runs at 100% CPU because the
+Ampere shape has no GPU, and prompt evaluation for a turn carrying 16 tool
+schemas takes longer on four ARM cores than waiting out the free tier's rate
+limit. The 2048-token default context is a second blocker, though that one is
+fixable with `num_ctx`. Revisit only on a machine with a GPU — not by trying a
+different small model, which changes the wrong variable.
+
 **Notes live in `./notes`, mounted at `/notes`.** One folder of markdown, read
 from disk. `NOTES_DIR` is the container path and does not change;
 `NOTES_HOST_DIR` repoints the host side at a real vault. The folder's contents
