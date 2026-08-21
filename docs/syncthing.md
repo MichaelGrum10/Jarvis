@@ -275,8 +275,12 @@ find "$ICLOUD_NOTES" -name '*.md' -not -path '*/.*' | wc -l
 ```
 
 `-not -path '*/.*'` skips `.stfolder`, `.stversions` and `.obsidian`, which
-exist on one side and not the other by design. The two numbers should be
-identical. If the server is lower, check step 4 — placeholders are the usual
+exist on one side and not the other by design.
+
+**The server should read exactly one higher than the Mac.** `notes/README.md`
+is tracked in git and therefore in the ignore list, so it lives on the server
+and never crosses. Equal numbers would mean the ignore rule is missing on one
+side. If the server is *lower*, check step 4 — placeholders are the usual
 reason.
 
 Then confirm Jarvis itself sees them:
