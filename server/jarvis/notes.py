@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -217,6 +218,30 @@ class Vault:
             "links": [{"source": a, "target": b} for a, b in sorted(links)],
         }
 
+    @staticmethod
+    def _match_owner(target: Path, reference: Path) -> None:
+        """Give something we just created the vault's own ownership.
+
+        Jarvis runs as root inside the container; the vault on the host belongs
+        to whoever Syncthing runs as. A root-owned file is not a cosmetic
+        problem: Syncthing applies a change by writing a temporary file into the
+        directory and renaming over the target, so a root-owned `captures/`
+        cannot be written to at all. Captures sync *out* once and that folder
+        then stops syncing, with no error anywhere the user would see it.
+
+        Matching the vault rather than hard-coding uid 1000 means this stays
+        correct if the vault is moved somewhere owned by someone else.
+        """
+        try:
+            owner = reference.stat()
+            if os.geteuid() == owner.st_uid:
+                return          # already running as the owner; nothing to do
+            os.chown(target, owner.st_uid, owner.st_gid)
+        except (OSError, AttributeError):
+            # Not permitted, or a platform without chown. The capture itself
+            # succeeded, and that matters more than its ownership.
+            log.debug("Could not match vault ownership for %s", target, exc_info=True)
+
     def capture(self, text: str) -> Note:
         """Write a new note into captures/, titled from its first few words."""
         root = notes_dir()
@@ -232,6 +257,10 @@ class Vault:
 
         folder = root / "captures"
         folder.mkdir(parents=True, exist_ok=True)
+        # Every time, not just on creation: the directory may already exist
+        # root-owned from a capture written before this was fixed, and the
+        # directory's ownership is the half that blocks Syncthing.
+        self._match_owner(folder, root)
         path = folder / f"{safe}.md"
         if path.exists():
             path = folder / f"{safe} {dt.datetime.now().strftime('%H%M%S')}.md"
@@ -241,6 +270,7 @@ class Vault:
             f"---\ncreated: {now.isoformat()}\ntags: [capture]\nsource: jarvis\n---\n\n{text}\n",
             encoding="utf-8",
         )
+        self._match_owner(path, root)
         self.load(force=True)
         log.info("Captured note %s", path.name)
         return next(n for n in self._notes if n.path.name == path.name)

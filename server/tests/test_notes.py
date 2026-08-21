@@ -241,3 +241,48 @@ def test_a_large_vault_builds_its_graph_quickly(tmp_path, monkeypatch):
     assert len(graph["nodes"]) == 1200
     assert graph["links"]
     assert elapsed < 5, f"graph took {elapsed:.1f}s"
+
+
+# --- ownership, which is what keeps Syncthing working ---
+
+
+def test_a_capture_inherits_the_vault_ownership(vault, tmp_path, monkeypatch):
+    """Jarvis runs as root in the container; the vault belongs to the user
+    Syncthing runs as. Syncthing applies a change by writing a temp file into
+    the directory and renaming, so a root-owned captures/ cannot be written to
+    at all — the folder silently stops syncing, with no error to see."""
+    calls = []
+    monkeypatch.setattr(notes_mod.os, "chown", lambda p, u, g: calls.append((str(p), u, g)))
+    # Pretend to be somebody other than the vault's owner, which is exactly the
+    # container's situation.
+    monkeypatch.setattr(notes_mod.os, "geteuid", lambda: 999_999)
+
+    want = tmp_path.stat()
+    note = vault.capture("Remember that the box reboots on Sundays")
+
+    owned = {c[0] for c in calls}
+    assert str(tmp_path / "captures") in owned, "the directory is the half that blocks Syncthing"
+    assert any(note.title in path for path in owned), "and the note file itself"
+    assert all((u, g) == (want.st_uid, want.st_gid) for _, u, g in calls)
+
+
+def test_ownership_is_not_touched_when_we_already_own_the_vault(vault, monkeypatch):
+    """Running as the owner — a normal dev machine — must not call chown at all."""
+    calls = []
+    monkeypatch.setattr(notes_mod.os, "chown", lambda *a: calls.append(a))
+    vault.capture("Anything at all")
+    assert calls == []
+
+
+def test_a_capture_still_succeeds_when_chown_is_refused(vault, monkeypatch):
+    """Not running as root is the normal case outside the container. The note
+    is what matters; its ownership is a bonus."""
+    def refuse(*_a):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(notes_mod.os, "chown", refuse)
+    monkeypatch.setattr(notes_mod.os, "geteuid", lambda: 0)
+
+    note = vault.capture("Written despite the chown failing")
+    assert note.title
+    assert vault.search("chown failing")
