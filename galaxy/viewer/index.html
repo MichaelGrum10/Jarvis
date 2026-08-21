@@ -58,7 +58,7 @@
   #hint {
     position: fixed;
     left: 50%;
-    bottom: 22px;
+    top: 18px;
     transform: translateX(-50%);
     z-index: 3;
     color: var(--muted);
@@ -154,6 +154,79 @@
     font: 13px/1.8 ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   #fail code { color: var(--accent); }
+
+  /* ---- ask bar ---- */
+  #ask {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translateX(-50%);
+    z-index: 5;
+    width: min(720px, 92vw);
+  }
+  #ask-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 6px 6px 6px 18px;
+    background: rgba(12, 18, 27, 0.86);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    backdrop-filter: blur(16px);
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .55);
+  }
+  #ask-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--text);
+    font-size: 15px;          /* 16px or under avoids iOS zoom-on-focus */
+    padding: 10px 0;
+  }
+  #ask-input::placeholder { color: #61748c; }
+  #ask-send {
+    width: 38px; height: 38px;
+    flex: none;
+    border: none;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #04121f;
+    font-size: 17px;
+    cursor: pointer;
+  }
+  #ask-send:disabled { opacity: .45; cursor: default; }
+
+  #answer {
+    margin-bottom: 10px;
+    padding: 16px 20px;
+    background: rgba(12, 18, 27, 0.92);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    backdrop-filter: blur(16px);
+    line-height: 1.6;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+  #answer.hidden { display: none; }
+  #answer .sources {
+    margin-top: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  #answer .src {
+    padding: 5px 11px;
+    background: rgba(127, 230, 255, .09);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--accent);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  #answer .src:hover { background: rgba(127, 230, 255, .2); }
+  #answer .warn { margin-top: 10px; color: #ffb454; font-size: 12px; }
+  #answer .err { color: #ff8a8a; }
 </style>
 </head>
 <body>
@@ -172,6 +245,16 @@
   <p class="links-head" id="p-links-head" hidden>Linked notes</p>
   <div id="p-links"></div>
 </aside>
+
+
+<div id="ask">
+  <div id="answer" class="hidden"></div>
+  <div id="ask-row">
+    <input id="ask-input" type="text" autocomplete="off"
+           placeholder="Ask your notes a question…">
+    <button id="ask-send" aria-label="Ask">↑</button>
+  </div>
+</div>
 
 <div id="fail"></div>
 
@@ -417,6 +500,128 @@
   $('close').onclick = clearSelection;
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') clearSelection();
+  });
+
+
+  /* ---------------- asking the notes ---------------- */
+
+  var askInput = $('ask-input');
+  var askSend  = $('ask-send');
+  var answerBox = $('answer');
+
+  // Per-tab, so two windows keep separate conversations and a reload keeps one.
+  var session = sessionStorage.getItem('galaxy-session');
+  if (!session) {
+    session = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    sessionStorage.setItem('galaxy-session', session);
+  }
+
+  function frameNodes(ids) {
+    var chosen = ids.map(function (i) { return byId.get(i); })
+                    .filter(function (n) { return n && isFinite(n.x); });
+    if (!chosen.length) return;
+
+    selected = chosen.length === 1 ? chosen[0].id : null;
+    lit = new Set(ids);
+    refresh();
+
+    var mid = { x: 0, y: 0, z: 0 };
+    chosen.forEach(function (n) {
+      mid.x += n.x / chosen.length; mid.y += n.y / chosen.length; mid.z += n.z / chosen.length;
+    });
+    // Far enough back that every cited note is in shot. A dive that frames one
+    // of six sources is worse than no dive.
+    var spread = 90;
+    chosen.forEach(function (n) {
+      spread = Math.max(spread, Math.hypot(n.x - mid.x, n.y - mid.y, n.z - mid.z));
+    });
+    var back = Math.max(200, spread * 2.6);
+    var span = Math.hypot(mid.x, mid.y, mid.z) || 1;
+    var ratio = 1 + back / span;
+
+    flying = true;
+    Graph.cameraPosition(
+      { x: mid.x * ratio, y: mid.y * ratio, z: mid.z * ratio }, mid, 1800);
+    setTimeout(function () { flying = false; }, 1900);
+  }
+
+  function renderAnswer(text, ids, warning, isError) {
+    answerBox.classList.remove('hidden');
+    answerBox.innerHTML = '';
+
+    var body = document.createElement('div');
+    if (isError) body.className = 'err';
+    // textContent throughout: this is the user's own writing coming back, and
+    // it may legitimately contain angle brackets.
+    body.textContent = text;
+    answerBox.appendChild(body);
+
+    if (ids && ids.length) {
+      var row = document.createElement('div');
+      row.className = 'sources';
+      ids.forEach(function (id) {
+        var node = byId.get(id);
+        if (!node) return;
+        var chip = document.createElement('button');
+        chip.className = 'src';
+        chip.textContent = node.label;
+        chip.onclick = function () { select(node); };
+        row.appendChild(chip);
+      });
+      if (row.children.length) answerBox.appendChild(row);
+    }
+
+    if (warning) {
+      var warn = document.createElement('div');
+      warn.className = 'warn';
+      warn.textContent = warning;
+      answerBox.appendChild(warn);
+    }
+  }
+
+  function ask() {
+    var question = askInput.value.trim();
+    if (!question) return;
+
+    askSend.disabled = true;
+    renderAnswer('Reading your notes…', null, null, false);
+
+    fetch('/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: question,
+        session: session,
+        // Node ids are array positions, so an answer is only meaningful
+        // against the graph this page actually loaded. The server compares
+        // this and tells us when the vault has moved on.
+        generation: GRAPH.generation
+      })
+    })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, body: j }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          renderAnswer(res.body.error || 'Something went wrong.', null, null, true);
+          return;
+        }
+        var warning = res.body.stale
+          ? 'Your notes changed since this page loaded — the highlighted stars may be wrong. POST /rebuild and reload.'
+          : null;
+        renderAnswer(res.body.answer, res.body.nodes, warning, false);
+        if (!res.body.stale && res.body.nodes && res.body.nodes.length) {
+          frameNodes(res.body.nodes);
+        }
+        askInput.value = '';
+      })
+      .catch(function (err) {
+        renderAnswer('Could not reach the server: ' + err.message, null, null, true);
+      })
+      .then(function () { askSend.disabled = false; askInput.focus(); });
+  }
+
+  askSend.onclick = ask;
+  askInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); ask(); }
   });
 
   /* ---------------- idle drift ---------------- */

@@ -21,6 +21,7 @@ and any saved reference to "node 12" would silently point somewhere else.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -75,6 +76,7 @@ def scan(root: Path) -> list[dict]:
             path = Path(dirpath) / name
             try:
                 raw = path.read_text(encoding="utf-8", errors="replace")
+                mtime = path.stat().st_mtime
             except OSError:
                 # Deleted or replaced between listing and reading. Normal here.
                 continue
@@ -91,6 +93,7 @@ def scan(root: Path) -> list[dict]:
                     "path": relative.as_posix(),
                     "_text": body.lower(),
                     "_links": [m.group(1).strip().lower() for m in WIKILINK.finditer(body)],
+                    "_mtime": mtime,
                 }
             )
 
@@ -141,6 +144,25 @@ def link(nodes: list[dict]) -> list[dict]:
     return [{"source": a, "target": b} for a, b in sorted(edges)]
 
 
+
+def generation(nodes: list[dict]) -> str:
+    """A short fingerprint of exactly which files, in which order, at which
+    version produced this graph.
+
+    Node ids are array positions, so an answer that cites "node 12" is only
+    meaningful against the graph it was computed from. Syncthing can change the
+    vault between a page load and a question, which would silently renumber
+    everything and send the camera to an unrelated note. The viewer sends this
+    value back with each question so the server can say the graph is stale
+    rather than quietly answer about the wrong stars.
+    """
+    digest = hashlib.sha1(usedforsecurity=False)
+    for node in nodes:
+        digest.update(node["path"].encode("utf-8"))
+        digest.update(f"{node.get('_mtime', 0):.0f}".encode())
+    return digest.hexdigest()[:12]
+
+
 def write(nodes: list[dict], links: list[dict], out: Path) -> None:
     """Write atomically: the viewer may be fetching this file right now, and a
     half-written graph-data.js is a syntax error rather than a partial graph."""
@@ -149,7 +171,10 @@ def write(nodes: list[dict], links: list[dict], out: Path) -> None:
          "excerpt": n["excerpt"], "path": n["path"]}
         for n in nodes
     ]
-    payload = json.dumps({"nodes": public, "links": links}, ensure_ascii=False)
+    payload = json.dumps(
+        {"generation": generation(nodes), "nodes": public, "links": links},
+        ensure_ascii=False,
+    )
 
     out.parent.mkdir(parents=True, exist_ok=True)
     tmp = out.with_name(out.name + ".tmp")
