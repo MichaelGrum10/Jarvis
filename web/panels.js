@@ -4,6 +4,13 @@
  * screen, stacked on a phone. Drag one by its heading and it detaches from that
  * layout and stays where you left it, on this device, until you reset it.
  *
+ * **Only where the panels are docked.** On a narrow screen they are stacked in
+ * normal flow under the ring and the HUD scrolls; dragging one out of that
+ * stack leaves a hole and puts it over the thing you were reading. Worse, the
+ * `touch-action: none` that dragging needs would eat the scroll gesture on the
+ * one layout that depends on scrolling. So on a phone they are furniture, and
+ * the drag handles are not attached at all.
+ *
  * Two things this deliberately does not do:
  *
  * - **It never drags from the panel body.** Headings only. The bodies scroll and
@@ -17,6 +24,10 @@
 
 const KEY = 'jarvis-hud-layout';
 const EDGE = 8;             // px of panel that must stay on screen
+
+// The same breakpoint as the stylesheet's docking rule. Below it the panels are
+// in normal flow and must stay there.
+const DOCKED = window.matchMedia('(min-width: 980px)');
 
 let layout = load();
 
@@ -56,14 +67,13 @@ export function makeDraggable(panel) {
   const handle = panel.querySelector('h3');
   if (!handle || handle.dataset.drag) return;
   handle.dataset.drag = 'on';
-  handle.classList.add('drag-handle');
-
-  const saved = layout[panel.id];
-  if (saved) place(panel, saved.left, saved.top);
 
   let originX = 0, originY = 0, startLeft = 0, startTop = 0, dragging = false;
 
   handle.addEventListener('pointerdown', (event) => {
+    // Checked here as well as at setup: a window resized across the breakpoint
+    // keeps its listeners, and the layout underneath has changed.
+    if (!DOCKED.matches) return;
     // Ignore anything but a primary press: a two-finger scroll or a right-click
     // is not a drag.
     if (event.button !== 0 && event.pointerType === 'mouse') return;
@@ -114,14 +124,47 @@ export function layoutIsCustom() {
   return Object.keys(layout).length > 0;
 }
 
-/** Drag every panel that exists now, and keep them on screen afterwards. */
+/** Put the panels where this screen wants them, draggable or not.
+ *
+ * Called on load and whenever the viewport crosses the breakpoint. Rotating a
+ * phone, or dragging a window narrow, has to return the panels to the stack —
+ * and turning back has to give them their positions again, which is why going
+ * narrow clears the layout from the page but never from storage.
+ */
+function applyLayout() {
+  const docked = DOCKED.matches;
+  for (const panel of document.querySelectorAll('.hud-panel')) {
+    const handle = panel.querySelector('h3');
+    // The class carries the grab cursor and, more importantly, touch-action:
+    // none. Leaving it on a phone would eat the scroll gesture the stacked
+    // layout depends on.
+    handle?.classList.toggle('drag-handle', docked);
+
+    const saved = docked ? layout[panel.id] : null;
+    if (saved) {
+      place(panel, saved.left, saved.top);
+    } else {
+      panel.classList.remove('moved');
+      panel.style.left = '';
+      panel.style.top = '';
+    }
+  }
+}
+
+/** Set the panels up for this screen, and keep them on it. */
 export function initPanels() {
   for (const panel of document.querySelectorAll('.hud-panel')) makeDraggable(panel);
+  applyLayout();
+
+  // Safari before 14 has no addEventListener on a MediaQueryList.
+  if (DOCKED.addEventListener) DOCKED.addEventListener('change', applyLayout);
+  else DOCKED.addListener(applyLayout);
 
   window.addEventListener('resize', () => {
-    // A layout saved on a laptop and opened on a phone puts panels off the
-    // right-hand edge. Re-clamping on resize is what makes that recoverable
-    // without knowing the reset button exists.
+    if (!DOCKED.matches) return;
+    // A layout saved on a big display and reopened on a small one puts panels
+    // off the right-hand edge. Re-clamping on resize is what makes that
+    // recoverable without knowing the reset button exists.
     for (const panel of document.querySelectorAll('.hud-panel.moved')) {
       const box = panel.getBoundingClientRect();
       const safe = place(panel, box.left, box.top);
