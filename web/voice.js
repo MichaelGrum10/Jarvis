@@ -13,12 +13,126 @@
 
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+/* Chrome on iOS is Safari underneath — Apple mandates WebKit for every browser
+ * engine on the platform — so every quirk handled below applies on iOS no matter
+ * which browser is installed. Testing in Chrome on a Mac tells you nothing about
+ * Chrome on an iPhone. */
+export const IS_IOS =
+  /iPhone|iPod|iPad/.test(navigator.userAgent) ||
+  (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+export const IS_WEBKIT =
+  IS_IOS || (/Safari/.test(navigator.userAgent) && !/Chrome|Chromium|Edg/.test(navigator.userAgent));
+
 export const voiceSupport = {
   get recognition() { return Boolean(SpeechRecognitionImpl); },
   get recording() { return Boolean(navigator.mediaDevices?.getUserMedia && window.MediaRecorder); },
   get synthesis() { return 'speechSynthesis' in window; },
   get any() { return this.recognition || this.recording; },
+  /* Both the microphone and speechSynthesis require a secure context. Served
+   * from a remote host over plain HTTP, both fail *silently* — no exception, no
+   * console error, simply nothing happens. Checking explicitly is the only way
+   * to tell the user why. */
+  get secure() { return window.isSecureContext === true; },
 };
+
+/* ---------------- audio unlock (Safari) ---------------- */
+
+let unlocked = false;
+
+/**
+ * Unlock speechSynthesis from inside a user gesture.
+ *
+ * Safari refuses speak() unless the call chain traces back to a real gesture.
+ * Our answers arrive from an async fetch, so by the time there is something to
+ * say the gesture is long gone and Safari does nothing at all — no error, no
+ * sound. Speaking a single space at volume 0 during the first tap marks the
+ * audio session as user-initiated, and every later programmatic speak() works
+ * for the rest of the page's life.
+ *
+ * resume() is here because Safari sometimes starts the engine paused; on a
+ * paused engine speak() queues silently and never plays.
+ *
+ * Safe to call repeatedly — it does its work once.
+ */
+export function unlockSpeech() {
+  if (unlocked || !voiceSupport.synthesis) return unlocked;
+  try {
+    const silent = new SpeechSynthesisUtterance(' ');
+    silent.volume = 0;
+    window.speechSynthesis.speak(silent);
+    window.speechSynthesis.resume();
+    unlocked = true;
+  } catch {
+    // Leave the flag down so the next gesture tries again.
+  }
+  return unlocked;
+}
+
+export const speechUnlocked = () => unlocked;
+
+/* ---------------- voice list ---------------- */
+
+let voicesPromise = null;
+
+/**
+ * The voice list, waited for properly.
+ *
+ * Safari returns [] from getVoices() on the first call and fires voiceschanged
+ * unreliably — sometimes late, sometimes never. Waiting only on the event hangs
+ * forever; reading only the array gets nothing. So: resolve on whichever of the
+ * event or a one-second timeout arrives first, and re-read the array on the
+ * timeout path, because by then it is usually populated even though nothing
+ * announced it.
+ */
+export function getVoicesAsync(timeout = 1000) {
+  if (voicesPromise) return voicesPromise;
+  if (!voiceSupport.synthesis) return Promise.resolve([]);
+
+  voicesPromise = new Promise((resolve) => {
+    const ready = window.speechSynthesis.getVoices();
+    if (ready.length) return resolve(ready);
+
+    let settled = false;
+    const finish = (voices) => {
+      if (settled) return;
+      settled = true;
+      window.speechSynthesis.removeEventListener('voiceschanged', onChange);
+      clearTimeout(timer);
+      resolve(voices);
+    };
+    // addEventListener, never onvoiceschanged =. Assignment means whichever
+    // consumer is constructed last silently destroys the other's handler, and
+    // the loser never gets a voice at all.
+    const onChange = () => finish(window.speechSynthesis.getVoices());
+    const timer = setTimeout(() => finish(window.speechSynthesis.getVoices()), timeout);
+    window.speechSynthesis.addEventListener('voiceschanged', onChange);
+  });
+  return voicesPromise;
+}
+
+/**
+ * A British voice if one exists, and never null.
+ *
+ * The fallback chain matters on iOS: a null utterance.voice is handled poorly
+ * there — sometimes silent, sometimes the wrong language — so anything is
+ * better than nothing.
+ */
+export function pickBritishVoice(voices) {
+  if (!voices?.length) return null;
+  const chain = [
+    (v) => v.lang === 'en-GB' && /Daniel|Serena|Kate|Oliver|Arthur|Martha/i.test(v.name),
+    (v) => v.lang === 'en-GB' && /Siri/i.test(v.name),
+    (v) => v.lang === 'en-GB',
+    (v) => v.lang?.startsWith('en'),
+    (v) => v.default,
+  ];
+  for (const test of chain) {
+    const hit = voices.find(test);
+    if (hit) return hit;
+  }
+  return voices[0];      // never leave it unset
+}
+
 
 /* ---------------- speech in ---------------- */
 
@@ -37,6 +151,11 @@ export class Listener {
 
   async start({ continuous = false } = {}) {
     if (this.active) return;
+    // On iOS, starting recognition while synthesis is still speaking tears down
+    // the shared audio session: the mic opens, hears nothing, and ends. Killing
+    // playback first is the whole fix, and it has to happen for every entry
+    // point rather than only the one the HUD uses.
+    if (voiceSupport.synthesis) window.speechSynthesis.cancel();
     this.active = true;
     this.h.onStart?.();
     try {
@@ -64,8 +183,12 @@ export class Listener {
     const recognition = new SpeechRecognitionImpl();
     this.recognition = recognition;
     recognition.lang = navigator.language || 'en-US';
-    recognition.continuous = continuous;
-    recognition.interimResults = true;
+    // Safari's support for continuous and interim results is poor: continuous
+    // mode ends the session at unpredictable moments, and interim results
+    // arrive malformed or not at all. Chrome keeps both, because the live
+    // transcript is most of what makes dictation feel responsive.
+    recognition.continuous = IS_WEBKIT ? false : continuous;
+    recognition.interimResults = !IS_WEBKIT;
     recognition.maxAlternatives = 1;
 
     let finalText = '';
@@ -173,10 +296,11 @@ export class Speaker {
     this.voice = null;
     this.speaking = false;
     if (voiceSupport.synthesis) {
-      const load = () => { this.voice = pickVoice(); };
-      load();
-      // Chrome populates the voice list asynchronously after first paint.
-      window.speechSynthesis.onvoiceschanged = load;
+      // Shared, awaited, and cached — see getVoicesAsync. The previous version
+      // assigned onvoiceschanged here and JarvisVoice assigned it again, so
+      // whichever was constructed second destroyed the other's handler and one
+      // of them never got a voice on Safari.
+      getVoicesAsync().then((voices) => { this.voice = pickBritishVoice(voices); });
     }
   }
 
@@ -186,8 +310,12 @@ export class Speaker {
     if (!clean) return;
 
     this.cancel();
-    // Long replies get chunked at sentence boundaries: Chrome silently truncates
-    // utterances past a few hundred characters.
+    // If the page has never had a gesture, this is a no-op and Safari will stay
+    // silent — but on the path where a gesture did happen and something reset
+    // the engine, resume() inside unlockSpeech revives it.
+    unlockSpeech();
+    // Long replies get chunked at sentence boundaries: Safari stops at roughly
+    // 200-250 characters and Chrome truncates too, both without an error.
     const chunks = chunkForSpeech(clean);
     this.speaking = true;
     onStart?.();
@@ -210,26 +338,6 @@ export class Speaker {
     window.speechSynthesis.cancel();
     this.speaking = false;
   }
-}
-
-function pickVoice() {
-  const voices = window.speechSynthesis.getVoices();
-  if (!voices.length) return null;
-  const lang = navigator.language || 'en-US';
-  // Apple's Siri voices and Google's network voices sound markedly better than
-  // the default local ones, so prefer them when present.
-  const preferred = [
-    (v) => v.lang === lang && /Siri/i.test(v.name),
-    (v) => v.lang === lang && /Google/i.test(v.name),
-    (v) => v.lang === lang && /Samantha|Daniel|Karen|Moira/i.test(v.name),
-    (v) => v.lang === lang && v.localService,
-    (v) => v.lang.startsWith(lang.slice(0, 2)),
-  ];
-  for (const test of preferred) {
-    const hit = voices.find(test);
-    if (hit) return hit;
-  }
-  return voices[0];
 }
 
 /** Strip anything that reads badly out loud. */

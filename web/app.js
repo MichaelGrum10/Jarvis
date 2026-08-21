@@ -8,9 +8,9 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile } from '/static/voice.js?v=14';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=14';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=14';
+import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=15';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=15';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=15';
 
 const API = '';
 const store = {
@@ -100,6 +100,9 @@ function guessDeviceName() {
 }
 
 async function enterApp() {
+  checkSecureContext();
+  hideDeadVoiceControls();
+  showWakeGate('Good to see you.');
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   $('status-dot').classList.add('on');
@@ -668,7 +671,9 @@ function applyMode() {
   $('mode-btn').textContent = voice ? '⌨' : '🎙';
   $('mode-btn').title = voice ? 'Switch to typing' : 'Switch to voice';
   // Dictation stays available in text mode — it just doesn't take over the screen.
-  $('mic-btn').classList.toggle('hidden', !voiceSupport.any);
+  // Gated on the secure context too: over plain HTTP getUserMedia never resolves,
+  // so the button would look functional and do nothing at all.
+  $('mic-btn').classList.toggle('hidden', !voiceUsable());
 
   if (voice) {
     startWakeWord();
@@ -1272,6 +1277,76 @@ if ('serviceWorker' in navigator) {
 }
 
 // Tells the startup watchdog in index.html that the module ran.
+
+/* ---------------- Safari audio unlock + first-run gate ---------------- */
+
+/* Safari will not run speechSynthesis.speak() unless the call chain traces back
+ * to a user gesture. Every answer here arrives from an async fetch, so by the
+ * time there is something to say the gesture is gone and Safari stays silent —
+ * no error, no console warning, nothing. The fix is to prime the engine during
+ * the very first interaction of any kind, whatever that interaction was for.
+ *
+ * Capture phase and { once: true }: capture so it runs before any handler that
+ * might stopPropagation, once because unlockSpeech is idempotent and there is
+ * no reason to keep a listener alive for the rest of the session. */
+/** Voice needs both an API and a secure context; either missing means dead controls. */
+function voiceUsable() {
+  return voiceSupport.any && voiceSupport.secure;
+}
+
+function armAudioUnlock() {
+  const prime = () => unlockSpeech();
+  for (const evt of ['pointerdown', 'touchstart', 'click', 'keydown']) {
+    window.addEventListener(evt, prime, { capture: true, once: true, passive: true });
+  }
+}
+
+/* Requirement 8. Served over plain HTTP from a remote host, getUserMedia and
+ * speechSynthesis both fail silently in Safari and Chrome alike. Say why. */
+function checkSecureContext() {
+  if (voiceSupport.secure) return true;
+  const bar = $('insecure');
+  bar.classList.remove('hidden');
+  bar.innerHTML = '<b>Voice is unavailable over plain HTTP.</b> '
+    + 'Microphones and speech both require a secure context. '
+    + 'Reach this page over <b>https://</b>, or tunnel it to localhost with '
+    + '<code>ssh -N -L 8000:127.0.0.1:8000 jarvis</code>.';
+  return false;
+}
+
+/* Requirement 9. A mic button that cannot work is worse than no mic button —
+ * it looks broken rather than absent. */
+function hideDeadVoiceControls() {
+  if (voiceUsable()) return;
+  // setMode first: applyMode owns the mic button's visibility, so hiding it
+  // here and then switching modes would simply un-hide it again.
+  setMode('text');
+  for (const id of ['voice-orb', 'mode-btn']) $(id)?.classList.add('hidden');
+}
+
+/* Requirement 2. The greeting cannot play on load, because nothing has been
+ * tapped yet. Ask for that tap once per session, with the app visible behind
+ * it, then speak. */
+function showWakeGate(greeting) {
+  const gate = $('wake-gate');
+  if (!voiceSupport.synthesis || !voiceSupport.secure) return;
+  if (sessionStorage.getItem('jarvis_woke')) return;
+
+  gate.classList.remove('hidden');
+  const wake = () => {
+    sessionStorage.setItem('jarvis_woke', '1');
+    // Order matters: unlock inside the gesture, and only then speak. Speaking
+    // first is the mistake that leaves Safari mute for the whole session.
+    unlockSpeech();
+    gate.classList.add('hidden');
+    if (greeting) jarvis.speak(greeting);
+  };
+  gate.addEventListener('click', wake, { once: true });
+  gate.addEventListener('touchend', wake, { once: true });
+}
+
+armAudioUnlock();
+
 window.__jarvisStarted = true;
 
 if (store.token) enterApp();

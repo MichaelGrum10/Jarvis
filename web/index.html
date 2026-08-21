@@ -10,8 +10,8 @@
 <title>Jarvis</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/style.css?v=14">
-<link rel="stylesheet" href="/static/hud.css?v=14">
+<link rel="stylesheet" href="/static/style.css?v=15">
+<link rel="stylesheet" href="/static/hud.css?v=15">
 </head>
 <body>
 
@@ -175,6 +175,21 @@
   <div id="galaxy-note" class="galaxy-note hidden"></div>
 </div>
 
+<!-- Requirement 8: both the microphone and speechSynthesis need a secure
+     context, and on plain HTTP both fail with no error of any kind. -->
+<div id="insecure" class="insecure hidden"></div>
+
+<!-- Requirement 2: Safari will not speak until a gesture has primed the audio
+     engine, so the page cannot greet you on load. This asks for that gesture
+     once, with the galaxy visible behind it, and the greeting follows the tap. -->
+<div id="wake-gate" class="wake-gate hidden">
+  <div class="wake-inner">
+    <div class="wake-ring"></div>
+    <p class="wake-title">Tap to wake Jarvis</p>
+    <p class="wake-sub">Safari needs one tap before it will speak.</p>
+  </div>
+</div>
+
 <div id="modal" class="modal hidden">
   <div class="modal-card">
     <div class="modal-head">
@@ -244,6 +259,6 @@
   });
 })();
 </script>
-<script type="module" src="/static/app.js?v=14"></script>
+<script type="module" src="/static/app.js?v=15"></script>
 </body>
 </html>

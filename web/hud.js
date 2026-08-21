@@ -15,6 +15,9 @@ const WAKE_RESTART_MS = 400;
 const MAX_UTTERANCE_MS = 15000;
 const SILENCE_MS = 1400;
 
+import { getVoicesAsync, pickBritishVoice, unlockSpeech, IS_WEBKIT }
+  from '/static/voice.js?v=15';
+
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 /* ---------------- WAV capture ---------------- */
@@ -122,7 +125,12 @@ export class WakeListener {
     this.onError = onError;
     this.recognition = null;
     this.wanted = false;
-    this.available = Boolean(SpeechRecognitionImpl);
+    // Keeping a wake word alive means restarting recognition from a timer,
+    // with no user gesture behind it. WebKit throws on that — every .start()
+    // needs its own fresh gesture — so on Safari and on every iOS browser
+    // (all of which are WebKit underneath) the wake word cannot work at all.
+    // Reporting it as unavailable is honest; trying and failing silently is not.
+    this.available = Boolean(SpeechRecognitionImpl) && !IS_WEBKIT;
   }
 
   start() {
@@ -259,15 +267,20 @@ export class JarvisVoice {
     this.enabled = true;
     this.speaking = false;
     if ('speechSynthesis' in window) {
-      const load = () => {
-        const voices = window.speechSynthesis.getVoices();
+      // Awaited through the shared helper rather than read synchronously: Safari
+      // returns an empty list on the first call. And this used to assign
+      // onvoiceschanged, which Speaker also assigned — so whichever was built
+      // second destroyed the other's handler and one of them stayed voiceless.
+      getVoicesAsync().then((voices) => {
         // An explicit choice always wins over the heuristic — the heuristic is a
         // starting point, not a correction to be reapplied.
         const chosen = localStorage.getItem('jarvis_voice');
-        this.voice = (chosen && voices.find((v) => v.name === chosen)) || pickJarvisVoice(voices);
-      };
-      load();
-      window.speechSynthesis.onvoiceschanged = load;
+        this.voice = (chosen && voices.find((v) => v.name === chosen))
+          || pickJarvisVoice(voices)
+          // Never leave it unset: iOS handles a null utterance.voice poorly,
+          // sometimes silently.
+          || pickBritishVoice(voices);
+      });
     }
   }
 
@@ -281,6 +294,7 @@ export class JarvisVoice {
     if (!clean) { onEnd?.(); return; }
 
     window.speechSynthesis.cancel();
+    unlockSpeech();      // no-op unless a gesture already primed the engine
     const chunks = chunkForSpeech(clean);
     this.speaking = true;
     onStart?.();

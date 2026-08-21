@@ -452,3 +452,40 @@ html, body {
 }
 #galaxy-answer .warn { margin-top: 9px; color: var(--warn); font-size: 12px; }
 #galaxy-answer .err { color: var(--bad); }
+
+/* ---------- secure-context banner ---------- */
+/* Not a nicety: on plain HTTP the mic and speech synthesis both do nothing at
+   all, with no exception and nothing in the console. */
+.insecure {
+  position: fixed; left: 0; right: 0; top: 0; z-index: 200;
+  padding: calc(10px + var(--safe-t)) 14px 10px;
+  background: #4a2f10; color: #ffd9a8;
+  font-size: 13px; line-height: 1.45; text-align: center;
+}
+.insecure.hidden { display: none; }
+.insecure b { color: #fff; }
+
+/* ---------- tap to wake ---------- */
+.wake-gate {
+  position: fixed; inset: 0; z-index: 150;
+  display: grid; place-items: center;
+  background: rgba(4, 8, 14, .72);
+  backdrop-filter: blur(3px);
+  cursor: pointer;
+  animation: wake-in .3s ease;
+}
+.wake-gate.hidden { display: none; }
+@keyframes wake-in { from { opacity: 0; } }
+.wake-inner { text-align: center; padding: 24px; }
+.wake-ring {
+  width: 92px; height: 92px; margin: 0 auto 22px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 34px rgba(77,163,255,.45), inset 0 0 26px rgba(77,163,255,.22);
+  animation: wake-pulse 2.1s ease-in-out infinite;
+}
+@keyframes wake-pulse {
+  50% { transform: scale(1.07); box-shadow: 0 0 52px rgba(77,163,255,.7), inset 0 0 34px rgba(77,163,255,.32); }
+}
+.wake-title { margin: 0 0 6px; font-size: 19px; font-weight: 600; }
+.wake-sub { margin: 0; color: var(--muted); font-size: 13px; }
