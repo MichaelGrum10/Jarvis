@@ -431,6 +431,28 @@ shut, and nothing says why. Insert above it (`-I INPUT <n>`, from
 `/etc/iptables/rules.v4`; `ufw` is deliberately not layered on top, per
 Oracle's own guidance.
 
+**The INPUT chain carries seven rules and no more.** 443, 80,
+RELATED/ESTABLISHED, icmp, loopback, ssh, then the catch-all REJECT. Four
+rules were removed as provably dead: one appended below the REJECT that had
+matched zero packets in the machine's lifetime, a duplicate `dpt:8000` whose
+counter was frozen behind the copy above it, and accepts for 8000 and 18789
+where nothing public listens. Verify a rule is live by sampling
+`iptables -L INPUT -n -v --line-numbers` twice and watching the counter, not
+by reading the rule.
+
+**`rpcbind` is masked.** It listened on `0.0.0.0:111`, is a host process rather
+than a container (so INPUT genuinely governed it), and is an amplification
+vector we have no use for without NFS. Note that `systemctl disable --now
+rpcbind` is *not* enough — `rpcbind.socket` stays bound and re-triggers the
+service, so both units need stopping and masking.
+
+**Slow answers are rate limits, not resource contention.** Measured at idle:
+load average 0.00, 8.6 GB of 11 GB available, with Ollama's model resident.
+The box is not short of anything. Don't re-diagnose latency as a capacity
+problem on the host — it is the free tier's tokens-per-minute ceiling, and the
+fix is another provider or a local endpoint, not a bigger shape. There is no
+swap, so the failure mode under a real spike is the OOM killer, not slowness.
+
 **Notes live in `./notes`, mounted at `/notes`.** One folder of markdown, read
 from disk. `NOTES_DIR` is the container path and does not change;
 `NOTES_HOST_DIR` repoints the host side at a real vault. The folder's contents
