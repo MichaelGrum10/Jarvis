@@ -66,6 +66,13 @@ except ImportError:
 CONFIG = Path.home() / ".jarvis-agent.json"
 LOG_FILE = Path.home() / "jarvis-agent.log"
 
+# Wake-word listening is optional and off unless the dependencies are present.
+# See wake.py: nothing leaves the Mac until the word is actually heard.
+try:
+    import wake
+except ImportError:                    # running without the module beside it
+    wake = None
+
 CONFIG_TEMPLATE = {
     "server": "wss://michael-jarvis.duckdns.org/api/agent/ws",
     "secret": "PUT-YOUR-AGENT-SECRET-HERE",
@@ -73,6 +80,10 @@ CONFIG_TEMPLATE = {
     # Only if Caddy's basic auth guards the site — it does. Leave the username
     # empty to send no basic auth at all.
     "basic_auth": {"username": "", "password": ""},
+    # The hard mute. True means the microphone is never opened at all — not
+    # opened and ignored. Re-read while running, so it takes effect in a second.
+    "muted": False,
+    "wake_word": True,
 }
 
 # Backoff for reconnects. A Mac wakes from sleep to a dead socket several times
@@ -110,6 +121,58 @@ def load_config() -> dict:
     if config.get("secret", "") in ("", CONFIG_TEMPLATE["secret"]):
         sys.exit(f"No agent secret set in {CONFIG}.")
     return config
+
+
+# The live listener, if one is running. A dict so the command handlers can see
+# it without a global statement in each.
+LISTENER: dict[str, object] = {}
+
+
+def _muted() -> bool:
+    """Read the mute from disk every time, not from memory.
+
+    The point of a hard mute is that editing the file works — including while
+    the agent is running, and including when the socket is down.
+    """
+    try:
+        return bool(json.loads(CONFIG.read_text()).get("muted", False))
+    except (OSError, ValueError):
+        # Unreadable config means we cannot prove muting is off. Stay muted.
+        return True
+
+
+def _set_config(key: str, value) -> None:
+    try:
+        config = json.loads(CONFIG.read_text())
+    except (OSError, ValueError):
+        config = {}
+    config[key] = value
+    tmp = CONFIG.with_suffix(".tmp")
+    tmp.write_text(json.dumps(config, indent=2) + "\n")
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, CONFIG)
+
+
+def _server_origin() -> str:
+    """The https:// origin of the server this agent is connected to."""
+    server = LISTENER.get("server") or CONFIG_TEMPLATE["server"]
+    return str(server).split("/api/")[0].replace("wss://", "https://").replace("ws://", "http://")
+
+
+def _afplay(url: str) -> bool:
+    """Play a URL through the Mac's speakers.
+
+    argv elements, never a command string — the URL comes off a socket, and
+    `afplay "$url"` with a crafted URL would be a shell injection.
+    """
+    try:
+        done = subprocess.run(["/usr/bin/afplay", url], capture_output=True, timeout=120)
+        if done.returncode != 0:
+            log.warning("afplay failed: %s", done.stderr.decode("utf-8", "replace")[:200])
+        return done.returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.warning("Could not play audio: %s", exc)
+        return False
 
 
 # --------------------------------------------------------------- the registry
@@ -369,6 +432,58 @@ def screen_capture(args: dict) -> dict:
     }
 
 
+@command("voice.status")
+def voice_status(args: dict) -> dict:
+    listener = LISTENER.get("it")
+    if listener is None:
+        available, why = (wake.probe() if wake else (False, "wake.py is not installed"))
+        return {"listening": False, "muted": _muted(), "available": available, "reason": why}
+    return listener.describe()
+
+
+@command("voice.mute")
+def voice_mute(args: dict) -> dict:
+    """Stop listening, immediately.
+
+    Deliberately not gated behind confirmation even though it changes state:
+    turning a microphone *off* is the safe direction, and a mute that needs
+    approval is a mute you cannot rely on.
+    """
+    _set_config("muted", True)
+    listener = LISTENER.get("it")
+    listener and listener.stop()
+    audit("voice.mute", {}, "microphone closed")
+    return {"muted": True, "listening": False}
+
+
+@command("voice.unmute", writes=True)
+def voice_unmute(args: dict) -> dict:
+    """Ask to start listening again — which needs confirming.
+
+    Turning a microphone *on* from a remote instruction is exactly the thing
+    that must not happen quietly, so this returns a proposal like any other
+    write. To do it now, set "muted": false in ~/.jarvis-agent.json.
+    """
+    return {"muted": False, "note": "Unmuting opens the microphone."}
+
+
+@command("audio.play")
+def audio_play(args: dict) -> dict:
+    """Play a clip the server has prepared, through the Mac's speakers.
+
+    A URL, not audio: the answer to a wake-word question can be several hundred
+    kilobytes and the socket is for control. The URL is fetched from the server
+    the agent is already connected to, and anything pointing elsewhere is
+    refused — an agent that plays arbitrary URLs is an agent that fetches
+    arbitrary URLs.
+    """
+    url = _string(args, "url")
+    base = _server_origin()
+    if not url.startswith(base):
+        raise ValueError("audio.play only plays clips from this Jarvis server")
+    return {"played": _afplay(url)}
+
+
 @command("system.run_shortcut", writes=True)
 def system_run_shortcut(args: dict) -> dict:
     return {
@@ -484,6 +599,8 @@ def _headers(config: dict) -> dict:
 async def session(config: dict) -> None:
     async with _connect(config["server"], _headers(config)) as socket:
         log.info("Connected to %s", config["server"])
+        LISTENER["server"] = config["server"]
+        loop = asyncio.get_event_loop()
 
         # AppleScript blocks for seconds at a time. Running it on the event loop
         # would stop this socket answering its own keepalive pings, and the
@@ -506,6 +623,17 @@ async def session(config: dict) -> None:
             except Exception as exc:                  # noqa: BLE001
                 log.warning("Could not answer %s: %s", message.get("command"), exc)
 
+        # The wake listener runs on its own thread and has to get an utterance
+        # onto this socket. call_soon_threadsafe is the handoff; touching the
+        # event loop from the audio thread any other way is a race.
+        def deliver(wav: bytes) -> None:
+            payload = json.dumps({"event": "wake", "format": "wav", "audio": wake.encode(wav)})
+            loop.call_soon_threadsafe(
+                lambda: asyncio.ensure_future(_send(socket, send_lock, payload))
+            )
+
+        start_wake(config, deliver)
+
         try:
             async for raw in socket:
                 try:
@@ -521,6 +649,38 @@ async def session(config: dict) -> None:
             # processes across every reconnect.
             for task in list(running):
                 task.cancel()
+
+
+async def _send(socket, lock, payload: str) -> None:
+    async with lock:
+        try:
+            await socket.send(payload)
+        except Exception as exc:                      # noqa: BLE001
+            log.warning("Could not deliver the wake utterance: %s", exc)
+
+
+def start_wake(config: dict, deliver) -> None:
+    """Start listening, if this Mac can and the config allows it."""
+    if not config.get("wake_word", True):
+        log.info("Wake word disabled in the config")
+        return
+    if wake is None:
+        log.info("Wake word not available: wake.py is not next to the agent")
+        return
+
+    available, why = wake.probe()
+    if not available:
+        log.info("Wake word not available: %s", why)
+        return
+
+    listener = LISTENER.get("it")
+    if listener is None:
+        listener = wake.WakeListener(on_utterance=deliver, is_muted=_muted)
+        LISTENER["it"] = listener
+    else:
+        # A reconnect gets a new socket; the listener and its thread survive.
+        listener.on_utterance = deliver
+    listener.start()
 
 
 async def run() -> None:

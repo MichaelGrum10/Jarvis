@@ -262,3 +262,111 @@ Everything above was verified in headless Chromium, including the degrade path
 core radius 23px with tone, 19px in silence). **None of it has run on Safari,
 on either platform.** The `boundary` behaviour and the rAF throttling are both
 WebKit-specific, and both are unverified.
+
+## The cloned voice
+
+`ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in `.env` turn on the cloned
+voice. Without them nothing breaks — Jarvis uses the browser's own voice and the
+status line says why.
+
+**The browser never talks to ElevenLabs.** It asks this server, and the server
+holds the key. That matters more than usual here: a TTS key is billed per
+character and would be trivially scraped out of anything served to a phone.
+
+### How a line gets spoken
+
+    POST /api/voice/speak   {text}          -> {url}          (device token)
+    GET  /api/voice/audio/<hash>?t=<ticket> -> audio/mpeg     (ticket only)
+
+Two steps, because of how audio actually plays. The textbook way to start on the
+first chunk is to read `response.body` into a MediaSource — and plain MediaSource
+does not exist on an iPhone, which rules it out on the device this is mostly used
+from. An `<audio>` pointed at a URL plays mp3 progressively everywhere, starting
+on the first bytes. But an `<audio>` cannot send an Authorization header, so the
+URL carries a signed ticket instead.
+
+The ticket is bound to one clip's hash and expires in five minutes. A leaked URL
+replays one line the owner already heard; it cannot be pointed at a different
+line, at another endpoint, or at the key.
+
+**Streaming, not batch.** The batch endpoint returns nothing until the whole clip
+is rendered — a couple of seconds of silence before he starts. `/stream` with
+`optimize_streaming_latency` sends audio as it is produced.
+
+**Cached by hash of the text, voice and model.** The boot greeting and the canned
+confirmations are identical every time and are said many times a day; rendering
+them again is money spent to receive the same bytes back. Written through a
+`.part` file and renamed, so a stream that dies halfway cannot leave a truncated
+clip to be served forever after.
+
+**Falling back.** A bad key, an exhausted quota, a network blip, a browser that
+refuses to play — all of them land on the browser's own voice, and all of them
+say why in the status line. A quota failure disables the cloned voice for the
+rest of the session rather than adding a doomed round trip to every sentence.
+
+## Interrupting him
+
+While he speaks the microphone stays open and speech-band energy is watched. When
+it stays up for 300ms, playback stops, the download is aborted and recognition
+starts — the three together are what makes it feel like interrupting a person.
+
+**Sustained, not peak.** Tested against three recordings played into the browser
+as a fake microphone:
+
+| input | peak level | interrupted? |
+| --- | --- | --- |
+| quiet room | 58 | no |
+| coughs and doors (90ms bursts) | **209** | no |
+| speech | 134 | yes, 300ms in |
+
+The coughs peak *higher* than the speech and still do not trigger. That is the
+whole point of the sustained window.
+
+The threshold is relative to a floor learned from the room, so it does not need
+tuning per microphone. The first 400ms after he starts is a calibration window —
+an earlier version started the floor at zero and interrupted itself in a silent
+room in 745ms.
+
+**Echo cancellation is essential.** The mic is requested with
+`echoCancellation`, `noiseSuppression` and `autoGainControl` all on. That is the
+browser's own canceller and it is good, but not perfect on a speakerphone at
+volume. **If he keeps interrupting himself, use headphones** — that removes the
+path entirely rather than relying on cancellation.
+
+## The wake word, and where it is not
+
+**There is no browser wake word, and there cannot be.** It needs an always-open
+recogniser, and WebKit requires a fresh user gesture for every `start()`. Safari
+cannot do it, and every browser on iOS is WebKit underneath — Chrome included.
+So the app says "wake word runs on the Mac, tap to talk here" rather than showing
+an indicator that does nothing.
+
+The wake word lives in the Mac agent instead: openWakeWord, locally, free, no
+cloud. Say "Jarvis", it records what follows, sends it up the agent's existing
+socket, and the answer plays back through the Mac's speakers.
+
+### What leaves the Mac, and when
+
+Nothing, until the word is heard. The model runs locally against a small ONNX
+file; the microphone feeds a buffer that is continuously overwritten and never
+written to disk. Only after a match does anything get sent — the few seconds of
+speech that follow. Silence, background conversation, and everything before the
+trigger are discarded in place.
+
+### The mute
+
+A visible indicator shows when the microphone is actually open. `"muted": true`
+in `~/.jarvis-agent.json` means the stream is never opened at all — not opened
+and ignored. The file is re-read continuously, so it takes effect within a second
+and survives a restart.
+
+`voice.mute` acts immediately. **`voice.unmute` does not** — it returns
+`pending_confirmation` like any other write, because turning a microphone on from
+a remote instruction is exactly what the confirmation gate exists for. Until that
+gate is built, unmuting means editing the file on the Mac:
+
+    python3 -c "import json,pathlib; p=pathlib.Path.home()/'.jarvis-agent.json'; d=json.loads(p.read_text()); d['muted']=False; p.write_text(json.dumps(d,indent=2))"
+    launchctl kickstart -k gui/$(id -u)/com.jarvis.agent
+
+If the config cannot be read at all, the agent stays muted — being unable to
+prove that muting is off is not the same as it being on.

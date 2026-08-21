@@ -427,3 +427,18 @@
   }
   .hud-stage { flex: none; }
 }
+
+/* Mic state, said out loud rather than implied by an icon. */
+.hud-mic {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase;
+  min-height: 1.2em;
+}
+.mic-armed { color: rgba(255, 138, 128, 0.95); animation: mic-blink 1.6s ease-in-out infinite; }
+@keyframes mic-blink { 50% { opacity: .45; } }
+.wake-where { color: rgba(79, 214, 247, 0.42); }
+.wake-where[data-state='on'] { color: rgba(63, 208, 127, 0.85); }
+.wake-where[data-state='muted'] { color: rgba(255, 180, 84, 0.8); }
+
+@media (prefers-reduced-motion: reduce) { .mic-armed { animation: none; } }

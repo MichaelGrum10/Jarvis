@@ -12,6 +12,13 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from .config import Settings, get_settings
 
 _SALT = "jarvis-device-token"
+# A different salt, so a speech ticket can never be replayed as a device token
+# and a device token can never be spent as a speech ticket. Same secret, and
+# rotating AUTH_SECRET invalidates both at once.
+_SPEECH_SALT = "jarvis-speech-ticket"
+# Long enough to start playing, short enough that a URL in a log or a history
+# entry is worthless by the time anyone reads it.
+SPEECH_TICKET_SECONDS = 300
 
 
 def _serializer(settings: Settings) -> URLSafeTimedSerializer:
@@ -21,6 +28,39 @@ def _serializer(settings: Settings) -> URLSafeTimedSerializer:
             "AUTH_SECRET is not configured on the server.",
         )
     return URLSafeTimedSerializer(settings.auth_secret, salt=_SALT)
+
+
+def _speech_serializer(settings: Settings) -> URLSafeTimedSerializer:
+    if not settings.auth_secret:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "AUTH_SECRET is not configured on the server.",
+        )
+    return URLSafeTimedSerializer(settings.auth_secret, salt=_SPEECH_SALT)
+
+
+def issue_speech_ticket(key: str, settings: Settings) -> str:
+    """Permission to hear one specific line, and nothing else.
+
+    An <audio> element cannot send an Authorization header, so the URL has to
+    carry its own proof. Binding the ticket to the clip's hash means a leaked
+    URL plays back one line the owner already heard — it is not a token, and it
+    cannot be pointed at a different line or at any other endpoint.
+    """
+    return _speech_serializer(settings).dumps({"k": key})
+
+
+def read_speech_ticket(ticket: str, key: str, settings: Settings) -> None:
+    if not ticket:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing speech ticket.")
+    try:
+        data = _speech_serializer(settings).loads(ticket, max_age=SPEECH_TICKET_SECONDS)
+    except SignatureExpired as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Speech ticket expired.") from exc
+    except BadSignature as exc:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid speech ticket.") from exc
+    if not hmac.compare_digest(str(data.get("k", "")), key):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "That ticket is for a different line.")
 
 
 def verify_password(candidate: str, settings: Settings) -> bool:

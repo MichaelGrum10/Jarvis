@@ -46,6 +46,45 @@ before it runs and again with its outcome — so a command that hangs still leav
 proof it arrived, and the record of what the server asked for is independent of
 what the server says it asked for.
 
+## The wake word
+
+Say "Jarvis" to the Mac and it answers out loud. This is the only place a wake
+word can live: it needs an always-open recogniser, WebKit requires a fresh user
+gesture for every `start()`, and every browser on iOS is WebKit underneath. So
+the browser says "wake word runs on the Mac, tap to talk here" rather than
+showing an indicator that does nothing.
+
+    pip3 install --user openwakeword sounddevice
+
+Both install per-user with no admin rights — the sounddevice wheel bundles
+PortAudio, so there is no Homebrew step. Without them the agent runs exactly as
+before and logs that the wake word is unavailable.
+
+macOS will ask for **Microphone** permission the first time the stream opens.
+
+### What leaves the Mac, and when
+
+Nothing, until the word is heard. openWakeWord runs locally against a small ONNX
+model; the microphone feeds a buffer that is continuously overwritten and never
+written to disk. Only after a match does anything get sent — the few seconds of
+speech that follow, over the socket that already exists. Silence, background
+conversation, and everything before the trigger are discarded in place.
+
+### Muting
+
+`"muted": true` in `~/.jarvis-agent.json` means the microphone stream is never
+opened — not opened and ignored, so the recording indicator in the menu bar goes
+out. The file is re-read while running, so it takes effect within a second.
+
+`voice.mute` acts immediately: turning a microphone off is the safe direction and
+a mute that needs approval is not a mute. **`voice.unmute` returns
+`pending_confirmation`** instead of acting, because turning one on from a remote
+instruction is precisely what confirmation is for. To unmute now, edit the file
+and restart the agent.
+
+An unreadable config counts as muted — being unable to prove that muting is off
+is not the same as it being on.
+
 ## Capabilities
 
 | Command | Writes? | Live? | Returns |
@@ -56,6 +95,10 @@ what the server says it asked for.
 | `mail.draft` | **yes** | stub | `pending_confirmation` with the proposed draft |
 | `screen.capture` | no | stub | a PNG, base64, for `display` |
 | `system.run_shortcut` | **yes** | stub | `pending_confirmation` with the shortcut name |
+| `voice.status` | no | **yes** | whether the mic is open, muted, and how many wakes |
+| `voice.mute` | no | **yes** | closes the microphone immediately |
+| `voice.unmute` | **yes** | **yes** | `pending_confirmation` — never opens a mic unasked |
+| `audio.play` | no | **yes** | plays a clip **from this server only** |
 
 The three reads went first on purpose. They cannot do damage, they are the ones
 that make Jarvis immediately more useful, and they are where you meet the
@@ -113,6 +156,7 @@ Everything here is per-user. No administrator account is needed at any point.
 From a Mac that can reach the server over SSH:
 
     scp -r SERVER:Jarvis/mac-agent/jarvis_agent.py \
+           SERVER:Jarvis/mac-agent/wake.py \
            SERVER:Jarvis/mac-agent/com.jarvis.agent.plist \
            SERVER:Jarvis/mac-agent/scripts ~/jarvis-agent/
 

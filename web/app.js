@@ -8,12 +8,14 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=20';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=20';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=20';
-import { initPanels, resetLayout } from '/static/panels.js?v=20';
-import { initReactor, reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
-  from '/static/reactor.js?v=20';
+import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=21';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=21';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=21';
+import { initPanels, resetLayout } from '/static/panels.js?v=21';
+import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned } from '/static/speech.js?v=21';
+import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=21';
+import { initReactor, reactorAnalyse, reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
+  from '/static/reactor.js?v=21';
 
 const API = '';
 const store = {
@@ -673,7 +675,35 @@ function startHud() {
   // resolves, so the button would look functional and do nothing at all.
   $('mic-btn').classList.toggle('hidden', !voiceUsable());
   startWakeWord();
-  setHudState('idle', identityState.enrolled ? 'Say "Jarvis", or tap' : 'Tap to speak');
+  describeWakeWord();
+  setHudState('idle', 'Tap to speak');
+}
+
+/** Say plainly where the wake word works, because it is not here.
+ *
+ * A browser wake word needs an always-open recogniser, and WebKit requires a
+ * fresh user gesture for every `start()` — so it cannot be done on Safari, and
+ * every iOS browser is Safari underneath. Showing a wake-word indicator that
+ * does nothing would be worse than showing none.
+ */
+async function describeWakeWord() {
+  const line = $('wake-where');
+  if (!line) return;
+  try {
+    const status = await api('/api/agent/status');
+    if (status.connected && status.wake_word?.listening) {
+      line.textContent = `Wake word live on ${status.label} — say "Jarvis"`;
+      line.dataset.state = 'on';
+      return;
+    }
+    if (status.connected) {
+      line.textContent = `Wake word available on ${status.label}, currently muted`;
+      line.dataset.state = 'muted';
+      return;
+    }
+  } catch { /* the agent endpoint is optional */ }
+  line.textContent = 'Wake word runs on the Mac — tap to talk here';
+  line.dataset.state = 'off';
 }
 
 /* ---------------- HUD state ----------------
@@ -697,17 +727,41 @@ function setHudState(state, status) {
  * reactor never has to guess whether Jarvis is talking.
  */
 function speakWithReactor(text, { onStart, onEnd } = {}) {
-  jarvis.speak(text, {
-    onStart: ({ text: spoken, rate } = {}) => {
-      reactorSpeaking(spoken || text, rate);
+  speakOut(text, {
+    onStart: ({ source } = {}) => {
+      // The cloned voice is audio we own, so the reactor reads its actual
+      // amplitude. The browser voice cannot be tapped at all, so that path
+      // reconstructs an envelope from the words instead.
+      if (source === 'cloned') reactorState('speaking');
+      else reactorSpeaking(text, 0.96);
+      armInterrupt();
       onStart?.();
     },
-    onBoundary: reactorBoundary,
     onEnd: () => {
+      disarmBargeIn();
       reactorSilent();
       reactorState('idle');
       onEnd?.();
     },
+  });
+}
+
+/** Stop him mid-sentence and start listening, the way you would a person. */
+function interrupt() {
+  stopSpeaking();
+  jarvis.cancel();
+  speaker.cancel();
+  reactorSilent();
+  $('voice-stop').classList.add('hidden');
+  setHudState('listening', 'Go ahead');
+  runVoiceTurn();
+}
+
+/** Keep the mic open while he talks, so he can be cut off. */
+function armInterrupt() {
+  if (!voiceUsable() || bargeInActive()) return;
+  armBargeIn(reactorUnlock(), { interrupt }).then((armed) => {
+    $('mic-armed').classList.toggle('hidden', !armed);
   });
 }
 
@@ -1234,6 +1288,9 @@ $('hud-stage').onclick = () => { if (jarvis.speaking) { jarvis.cancel(); } runVo
 $('hud-stage').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); runVoiceTurn(); } };
 $('hud-enroll').onclick = enrolVoice;
 $('voice-stop').onclick = () => {
+  stopSpeaking();
+  disarmBargeIn();
+  $('mic-armed').classList.add('hidden');
   jarvis.cancel();
   speaker.cancel();
   reactorSilent();
@@ -1258,6 +1315,20 @@ $('skills-btn').onclick = showSkills;
 $('cookies-btn').onclick = showBrowserSession;
 $('voice-btn').onclick = showVoicePicker;
 $('layout-btn').onclick = () => { resetLayout(); closeDrawer(); };
+initSpeech({
+  api,
+  // The reactor taps the cloned voice for real amplitude — this is the audio we
+  // own, and the whole reason that path exists.
+  analyse: (el) => reactorAnalyse(el),
+  fallback: (line, hooks) => jarvis.speak(line, { ...hooks, onBoundary: reactorBoundary }),
+  // A voice that changes with no explanation reads as a bug, so say why.
+  onStatus: (why) => {
+    if (!why) return;
+    setHudState($('hud').dataset.state || 'idle', `${why} — using the browser voice`);
+    hudAlert(`${why}. Falling back to the browser's voice.`);
+  },
+});
+
 initGalaxy({
   api,
   // The galaxy speaks its answers but never the note it opens: the note is on

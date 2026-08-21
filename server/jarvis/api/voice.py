@@ -12,20 +12,27 @@ works in the browser it's running in:
      the browser engines.
 
 So the client tries (1) for latency and falls back to (2) for coverage.
-Text-to-speech stays entirely in the browser via speechSynthesis — free, offline,
-and no audio ever leaves the device on the way out.
+Text-to-speech has two paths as well. The cloned ElevenLabs voice is proxied
+through /speak and /audio here, so the API key stays on this machine; the
+browser's own speechSynthesis is the fallback when that is unconfigured, broken,
+or out of quota. The fallback is free, offline, and sends nothing anywhere.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections.abc import AsyncIterator
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ..config import Settings, get_settings
-from ..security import CurrentDevice
+from ..integrations import elevenlabs
+from ..security import CurrentDevice, issue_speech_ticket, read_speech_ticket
 from ..voiceprint import VoiceprintError, embed_wav
 from .identity import load_profile, raise_alert, strip_wake_word, wake_word_present
 
@@ -107,6 +114,26 @@ async def _score_speaker(data: bytes) -> float | None:
         raise HTTPException(400, str(exc)) from exc
 
 
+class _RawAudio:
+    """The two fields _whisper actually reads off an UploadFile.
+
+    The wake-word path has bytes, not an upload. Rather than duplicate the
+    Whisper call — and have the two drift — it hands over something that looks
+    enough like one.
+    """
+
+    def __init__(self, filename: str, content_type: str) -> None:
+        self.filename = filename
+        self.content_type = content_type
+
+
+async def transcribe_bytes(data: bytes, settings: Settings, language: str = "") -> str:
+    """Transcribe raw audio. Used by the Mac's wake word, which has no upload."""
+    if not settings.groq_api_key:
+        raise RuntimeError("GROQ_API_KEY is not configured, so nothing can be transcribed.")
+    return await _whisper(data, _RawAudio("wake.wav", "audio/wav"), language, settings)
+
+
 async def _whisper(
     data: bytes,
     audio: UploadFile,
@@ -152,3 +179,112 @@ async def _whisper(
         raise HTTPException(502, f"Transcription failed ({response.status_code}).")
 
     return (response.json().get("text") or "").strip()
+
+
+# --------------------------------------------------------------- text to speech
+
+# Text waiting to be spoken, keyed by its content hash. A ticket names a hash;
+# the text itself never travels in a URL, where it would land in access logs and
+# browser history.
+_pending: dict[str, tuple[str, float]] = {}
+PENDING_TTL = 300.0
+
+
+def _sweep() -> None:
+    cutoff = time.time() - PENDING_TTL
+    for key in [k for k, (_, at) in _pending.items() if at < cutoff]:
+        _pending.pop(key, None)
+
+
+class Speech(BaseModel):
+    text: str
+
+
+@router.post("/speak")
+async def speak(device: CurrentDevice, body: Speech, settings: Settings = Depends(get_settings)):
+    """Prepare a line for playback and hand back a URL an <audio> can use.
+
+    Two steps rather than one because of how audio actually plays. Feeding a
+    fetch() stream into MediaSource is the textbook approach and does not work
+    on an iPhone — plain MediaSource is not available there — whereas an <audio>
+    pointed at a URL plays mp3 progressively on every browser in the house. But
+    an <audio> cannot send an Authorization header, so the URL carries a signed,
+    short-lived, single-line ticket instead of a device token.
+    """
+    text = elevenlabs.speakable_length(body.text)
+    if not text:
+        raise HTTPException(400, "Nothing to say.")
+    if not elevenlabs.configured(settings):
+        raise HTTPException(503, "ElevenLabs is not configured.")
+
+    key = elevenlabs.voice_key(text, settings)
+    _sweep()
+    _pending[key] = (text, time.time())
+    return {
+        "url": f"/api/voice/audio/{key}?t={issue_speech_ticket(key, settings)}",
+        "cached": elevenlabs.cached_path(key, settings) is not None,
+        "voice": "elevenlabs",
+    }
+
+
+@router.get("/audio/{key}")
+async def audio(key: str, t: str = "", settings: Settings = Depends(get_settings)):
+    """Stream the mp3 for a prepared line.
+
+    Authenticated by the ticket alone, because an <audio> element cannot carry a
+    header. The ticket is signed, expires in minutes, and names exactly one clip
+    — it grants the right to hear one line, not the right to spend the key.
+    """
+    read_speech_ticket(t, key, settings)
+
+    entry = _pending.get(key)
+    cached = elevenlabs.cached_path(key, settings)
+    if entry is None and cached is None:
+        raise HTTPException(404, "That line has expired. Ask again.")
+
+    text = entry[0] if entry else ""
+
+    async def body() -> AsyncIterator[bytes]:
+        if cached:
+            with cached.open("rb") as handle:
+                while chunk := handle.read(65536):
+                    yield chunk
+            return
+        async for chunk in elevenlabs.stream(text, settings):
+            yield chunk
+
+    try:
+        # Pull the first chunk here so a failure becomes a real status code. Once
+        # a StreamingResponse has begun there is no way to change its status, and
+        # the browser would get a 200 followed by silence.
+        stream = body()
+        first = await stream.__anext__()
+    except StopAsyncIteration:
+        raise HTTPException(502, "ElevenLabs returned no audio.") from None
+    except elevenlabs.SpeechError as exc:
+        raise HTTPException(503, str(exc), headers={"X-Speech-Quota": "1" if exc.quota else "0"}) from None
+
+    async def rest() -> AsyncIterator[bytes]:
+        yield first
+        async for chunk in stream:
+            yield chunk
+
+    return StreamingResponse(
+        rest(),
+        media_type="audio/mpeg",
+        headers={
+            # Private: it is the owner's voice saying the owner's business.
+            "Cache-Control": "private, max-age=3600",
+            "X-Speech-Source": "cache" if cached else "elevenlabs",
+        },
+    )
+
+
+@router.get("/speech-status")
+async def speech_status(device: CurrentDevice, settings: Settings = Depends(get_settings)):
+    """Whether the cloned voice is available, for the status line to explain."""
+    return {
+        "configured": elevenlabs.configured(settings),
+        "missing": settings.missing_for("tts"),
+        "cached_lines": len(list(elevenlabs.cache_dir(settings).glob("*.mp3"))),
+    }

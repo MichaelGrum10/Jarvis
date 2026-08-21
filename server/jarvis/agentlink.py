@@ -34,6 +34,7 @@ class AgentLink:
         self._pending: dict[str, asyncio.Future] = {}
         self._label = ""
         self._since: float = 0.0
+        self._events = None
 
     @property
     def connected(self) -> bool:
@@ -102,8 +103,28 @@ class AgentLink:
         finally:
             self._pending.pop(call_id, None)
 
+    def on_event(self, handler) -> None:
+        """Register what happens when the agent speaks first.
+
+        Almost everything here is request/response, but the wake word is not:
+        the Mac hears something and pushes it up unasked. That needs a route
+        that is not "match this to a pending call".
+        """
+        self._events = handler
+
     def resolve(self, message: dict) -> None:
         """Hand a reply from the agent back to whoever is waiting for it."""
+        event = message.get("event")
+        if event:
+            handler = getattr(self, "_events", None)
+            if handler is None:
+                log.info("Agent sent a %s event with nobody listening", event)
+                return
+            # Fire and forget: the agent is not waiting, and a slow handler must
+            # not stall the socket's read loop behind it.
+            asyncio.ensure_future(handler(message))
+            return
+
         call_id = message.get("id")
         future = self._pending.get(call_id)
         if future is None or future.done():

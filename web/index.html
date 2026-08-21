@@ -10,8 +10,8 @@
 <title>Jarvis</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/style.css?v=20">
-<link rel="stylesheet" href="/static/hud.css?v=20">
+<link rel="stylesheet" href="/static/style.css?v=21">
+<link rel="stylesheet" href="/static/hud.css?v=21">
 </head>
 <body>
 
@@ -88,6 +88,15 @@
     </div>
 
     <div id="hud-status" class="hud-status">Tap to speak</div>
+
+    <!-- Privacy, stated rather than implied. The dot is lit only while the
+         microphone is actually open, and the line says plainly where the wake
+         word does and does not work — a wake-word indicator on a browser that
+         cannot do it would be a lie. -->
+    <div class="hud-mic">
+      <span id="mic-armed" class="mic-armed hidden">● MIC OPEN — say something to interrupt</span>
+      <span id="wake-where" class="wake-where"></span>
+    </div>
 
     <!-- Panels flank the reactor on a wide screen and stack under it on a
          phone. They refresh on their own timers and never call the model. -->
@@ -258,6 +267,6 @@
   });
 })();
 </script>
-<script type="module" src="/static/app.js?v=20"></script>
+<script type="module" src="/static/app.js?v=21"></script>
 </body>
 </html>

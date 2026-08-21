@@ -223,9 +223,15 @@ def test_reads_do_not_come_back_pending(monkeypatch):
 
 def test_every_write_command_is_marked_as_one():
     """The registry is the gate. A handler that sends mail while flagged as a
-    read would act on the spot, so the flags themselves are the assertion."""
+    read would act on the spot, so the flags themselves are the assertion.
+
+    voice.unmute is here and voice.mute is not, deliberately: turning a
+    microphone off is the safe direction and must not need approval, while
+    turning one on from a remote instruction is exactly what confirmation is
+    for.
+    """
     writes = {name for name, entry in agent_mod.COMMANDS.items() if entry["writes"]}
-    assert writes == {"mail.draft", "system.run_shortcut"}
+    assert writes == {"mail.draft", "system.run_shortcut", "voice.unmute"}
 
 
 # ------------------------------------------------ parsing what AppleScript says
@@ -429,3 +435,136 @@ async def test_a_call_that_is_never_answered_times_out():
     with pytest.raises(AgentUnavailable) as caught:
         await link.call("screen.capture", {}, timeout=0.05)
     assert "did not answer" in str(caught.value)
+
+
+# ------------------------------------------------------------- the wake word
+
+
+def test_the_mac_only_plays_clips_from_its_own_server(monkeypatch):
+    """An agent that plays arbitrary URLs is an agent that fetches arbitrary
+    URLs — on a machine holding the mail and the calendar."""
+    played = []
+    monkeypatch.setattr(agent_mod, "_afplay", lambda url: played.append(url) or True)
+    monkeypatch.setitem(agent_mod.LISTENER, "server", "wss://michael-jarvis.duckdns.org/api/agent/ws")
+
+    good = agent_mod.dispatch({"id": "x", "command": "audio.play", "args": {
+        "url": "https://michael-jarvis.duckdns.org/api/voice/audio/abc?t=sig"}})
+    assert good["ok"] is True
+    assert len(played) == 1
+
+    for hostile in (
+        "https://evil.example.com/track.mp3",
+        "http://169.254.169.254/latest/meta-data/",
+        "file:///etc/passwd",
+    ):
+        refused = agent_mod.dispatch({"id": "x", "command": "audio.play", "args": {"url": hostile}})
+        assert refused["ok"] is False, hostile
+    assert len(played) == 1, "only the server's own clip should have played"
+
+
+def test_muting_is_read_from_disk_every_time(tmp_path, monkeypatch):
+    """The point of a hard mute is that editing the file works — while the agent
+    is running, and while the socket is down."""
+    config = tmp_path / ".jarvis-agent.json"
+    config.write_text('{"secret": "x", "muted": false}')
+    monkeypatch.setattr(agent_mod, "CONFIG", config)
+
+    assert agent_mod._muted() is False
+    config.write_text('{"secret": "x", "muted": true}')
+    assert agent_mod._muted() is True
+
+
+def test_an_unreadable_config_stays_muted(tmp_path, monkeypatch):
+    """Unable to prove muting is off is not the same as it being on."""
+    monkeypatch.setattr(agent_mod, "CONFIG", tmp_path / "does-not-exist.json")
+    assert agent_mod._muted() is True
+
+
+def test_muting_takes_effect_without_confirmation(tmp_path, monkeypatch):
+    config = tmp_path / ".jarvis-agent.json"
+    config.write_text('{"secret": "x", "muted": false}')
+    monkeypatch.setattr(agent_mod, "CONFIG", config)
+
+    reply = agent_mod.dispatch({"id": "x", "command": "voice.mute", "args": {}})
+    assert reply["ok"] is True
+    assert reply["data"]["muted"] is True          # acted, not proposed
+    assert agent_mod._muted() is True
+
+
+def test_unmuting_does_not(tmp_path, monkeypatch):
+    """Turning a microphone on from a remote instruction is exactly what the
+    confirmation gate is for."""
+    config = tmp_path / ".jarvis-agent.json"
+    config.write_text('{"secret": "x", "muted": true}')
+    monkeypatch.setattr(agent_mod, "CONFIG", config)
+
+    reply = agent_mod.dispatch({"id": "x", "command": "voice.unmute", "args": {}})
+    assert reply["data"]["status"] == "pending_confirmation"
+    assert agent_mod._muted() is True, "the microphone must still be closed"
+
+
+async def test_a_wake_event_with_junk_audio_is_dropped(monkeypatch):
+    """Anything arriving unasked gets checked before it reaches Whisper."""
+    from jarvis.api import agent as agent_api
+
+    called = []
+    monkeypatch.setattr(
+        "jarvis.api.voice.transcribe_bytes",
+        lambda *a, **k: called.append(a) or "",
+    )
+
+    await agent_api.handle_wake({"event": "wake", "audio": "not base64 at all!!"})
+    await agent_api.handle_wake({"event": "wake", "audio": ""})
+    assert called == []
+
+
+async def test_a_wake_event_is_transcribed_answered_and_played(monkeypatch):
+    """The whole round trip: heard on the Mac, answered on the server, spoken
+    back through the Mac's own speakers."""
+    import base64
+
+    from jarvis.api import agent as agent_api
+    from jarvis.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "elevenlabs_api_key", "k")
+    monkeypatch.setattr(settings, "elevenlabs_voice_id", "v")
+
+    async def fake_transcribe(data, settings, language=""):
+        return "what is on my calendar"
+
+    class FakeOutcome:
+        reply = "Nothing at all today, sir."
+        error = ""
+
+    class FakeAgent:
+        def __init__(self, *a, **k): pass
+        async def run(self, said, ctx=None):
+            assert said == "what is on my calendar"
+            return FakeOutcome()
+
+    monkeypatch.setattr("jarvis.api.voice.transcribe_bytes", fake_transcribe)
+    monkeypatch.setattr("jarvis.agent.loop.Agent", FakeAgent)
+
+    link = AgentLink()
+    sent = []
+
+    class Socket:
+        async def send_json(self, payload): sent.append(payload)
+
+    await link.attach(Socket(), "michaels-laptop")
+    monkeypatch.setattr("jarvis.api.agent.get_link", lambda: link)
+
+    async def answer():
+        await agent_api.handle_wake({"event": "wake", "audio": base64.b64encode(b"pcm" * 400).decode()})
+
+    task = asyncio.ensure_future(answer())
+    await asyncio.sleep(0.05)
+    assert sent, "nothing was sent to the Mac"
+    assert sent[0]["command"] == "audio.play"
+    url = sent[0]["args"]["url"]
+    assert url.startswith("https://")
+    assert "/api/voice/audio/" in url and "t=" in url
+
+    link.resolve({"id": sent[0]["id"], "ok": True, "data": {"played": True}})
+    await task

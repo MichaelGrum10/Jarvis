@@ -196,6 +196,21 @@ class Settings(BaseSettings):
     bridge_token: str = Field("", description="Shared secret between server and Mac bridge")
     bridge_stale_minutes: int = 15
 
+    # --- elevenlabs (the cloned voice) ---
+    # The browser never sees either of these. It asks this server to speak and
+    # the server holds the credential — a TTS key is billed per character and
+    # would be trivially scraped out of anything served to a phone.
+    elevenlabs_api_key: str = Field("", description="ElevenLabs API key; never sent to a browser")
+    elevenlabs_voice_id: str = Field("", description="The cloned voice to speak with")
+    # Turbo is the low-latency model, which is the point of streaming at all.
+    elevenlabs_model: str = "eleven_turbo_v2_5"
+    elevenlabs_stability: float = 0.45
+    elevenlabs_similarity: float = 0.8
+
+    # Where this server is reachable from outside. Only needed so the Mac can
+    # be handed an absolute URL for a clip to play — everything else is relative.
+    public_url: str = "https://michael-jarvis.duckdns.org"
+
     # --- mac companion agent (mail, calendar, screen, shortcuts) ---
     # Deliberately not bridge_token. The two grant different capability
     # surfaces, and sharing one secret would mean a leak of the messages token
@@ -315,6 +330,10 @@ class Settings(BaseSettings):
             "calendar_icloud": icloud_calendar,
             "messages": [("BRIDGE_TOKEN", self.bridge_token)],
             "agent": [("AGENT_SECRET", self.agent_secret)],
+            "tts": [
+                ("ELEVENLABS_API_KEY", self.elevenlabs_api_key),
+                ("ELEVENLABS_VOICE_ID", self.elevenlabs_voice_id),
+            ],
             # A boolean, not a credential — but it gates its tools the same way,
             # so the model is never offered a browser the image may not contain.
             "browser": [("BROWSER_ENABLED", self.browser_enabled)],
