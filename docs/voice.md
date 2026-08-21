@@ -195,8 +195,13 @@ iPad-landscape up, never overlapping the ring or the type bar, never off screen.
 ## Moving the panels
 
 **On a wide screen only.** Drag a panel by its heading and it leaves the layout
-and stays where you put it, on that device. **Reset panel layout** in the menu
-puts everything back.
+and stays where you put it for the rest of the session. **Reset panel layout** in
+the menu puts everything back, and so does reloading the page.
+
+Positions are deliberately not remembered across a reload. A dragged panel is a
+temporary rearrangement — moved aside to see something behind it — not a
+preference, and a layout that persisted would turn one careless drag into a page
+that stays wrong until you find the reset button.
 
 On a phone the panels are stacked in normal flow and are not draggable at all —
 dragging one out of the stack leaves a hole and drops it over whatever you were

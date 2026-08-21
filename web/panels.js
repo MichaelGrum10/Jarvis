@@ -2,7 +2,13 @@
  *
  * The panels start where the layout puts them — a column each side on a wide
  * screen, stacked on a phone. Drag one by its heading and it detaches from that
- * layout and stays where you left it, on this device, until you reset it.
+ * layout and stays where you left it for the rest of the session.
+ *
+ * **Deliberately not remembered across a reload.** Positions live in memory
+ * only: reloading puts everything back where the stylesheet wanted it. A
+ * dragged panel is a temporary rearrangement — moved aside to see something —
+ * not a preference, and a layout that persists turns one careless drag into a
+ * page that stays wrong until you find the reset button.
  *
  * **Only where the panels are docked.** On a narrow screen they are stacked in
  * normal flow under the ring and the HUD scrolls; dragging one out of that
@@ -22,28 +28,14 @@
  *   except clearing site data.
  */
 
-const KEY = 'jarvis-hud-layout';
 const EDGE = 8;             // px of panel that must stay on screen
 
 // The same breakpoint as the stylesheet's docking rule. Below it the panels are
 // in normal flow and must stay there.
 const DOCKED = window.matchMedia('(min-width: 980px)');
 
-let layout = load();
-
-function load() {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) || '{}') || {};
-  } catch {
-    return {};
-  }
-}
-
-function save() {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(layout));
-  } catch { /* private mode: the layout just won't survive a reload */ }
-}
+// This session only. Nothing is written to storage — see the note above.
+let layout = {};
 
 function clamp(panel, left, top) {
   const width = panel.offsetWidth || 240;
@@ -103,7 +95,6 @@ export function makeDraggable(panel) {
     try { handle.releasePointerCapture(event.pointerId); } catch { /* already gone */ }
     const box = panel.getBoundingClientRect();
     layout[panel.id] = { left: Math.round(box.left), top: Math.round(box.top) };
-    save();
   };
   handle.addEventListener('pointerup', drop);
   handle.addEventListener('pointercancel', drop);
@@ -112,7 +103,6 @@ export function makeDraggable(panel) {
 /** Put every panel back where the stylesheet wanted it. */
 export function resetLayout() {
   layout = {};
-  save();
   for (const panel of document.querySelectorAll('.hud-panel.moved')) {
     panel.classList.remove('moved');
     panel.style.left = '';
@@ -128,8 +118,8 @@ export function layoutIsCustom() {
  *
  * Called on load and whenever the viewport crosses the breakpoint. Rotating a
  * phone, or dragging a window narrow, has to return the panels to the stack —
- * and turning back has to give them their positions again, which is why going
- * narrow clears the layout from the page but never from storage.
+ * and turning back has to give them their positions again, so going narrow
+ * clears the layout from the page while keeping it in memory.
  */
 function applyLayout() {
   const docked = DOCKED.matches;
@@ -153,6 +143,10 @@ function applyLayout() {
 
 /** Set the panels up for this screen, and keep them on it. */
 export function initPanels() {
+  // An earlier version persisted layouts. Nothing reads that key now, so a
+  // browser that used it would carry a dead entry forever; clear it once.
+  try { localStorage.removeItem('jarvis-hud-layout'); } catch { /* private mode */ }
+
   for (const panel of document.querySelectorAll('.hud-panel')) makeDraggable(panel);
   applyLayout();
 
@@ -162,14 +156,13 @@ export function initPanels() {
 
   window.addEventListener('resize', () => {
     if (!DOCKED.matches) return;
-    // A layout saved on a big display and reopened on a small one puts panels
-    // off the right-hand edge. Re-clamping on resize is what makes that
-    // recoverable without knowing the reset button exists.
+    // Dragging a window smaller can leave a panel off the right-hand edge.
+    // Re-clamping on resize is what makes that recoverable without knowing the
+    // reset button exists.
     for (const panel of document.querySelectorAll('.hud-panel.moved')) {
       const box = panel.getBoundingClientRect();
       const safe = place(panel, box.left, box.top);
       layout[panel.id] = { left: Math.round(safe.left), top: Math.round(safe.top) };
     }
-    save();
   });
 }
