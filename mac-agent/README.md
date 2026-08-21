@@ -48,30 +48,73 @@ what the server says it asked for.
 
 ## Capabilities
 
-All six return fake data for now. The shapes are real; later prompts wire them
-to the actual applications.
+| Command | Writes? | Live? | Returns |
+| --- | --- | --- | --- |
+| `mail.list_recent` | no | **yes** | recent inbox messages (`limit`, 1–50) |
+| `mail.search` | no | **yes** | subject/sender matches for `query` |
+| `calendar.list_events` | no | **yes** | events over the next `days` (1–30) |
+| `mail.draft` | **yes** | stub | `pending_confirmation` with the proposed draft |
+| `screen.capture` | no | stub | a PNG, base64, for `display` |
+| `system.run_shortcut` | **yes** | stub | `pending_confirmation` with the shortcut name |
 
-| Command | Writes? | Returns |
-| --- | --- | --- |
-| `mail.list_recent` | no | recent messages (`limit`, 1–50) |
-| `mail.search` | no | matches for `query` |
-| `mail.draft` | **yes** | `pending_confirmation` with the proposed draft |
-| `calendar.list_events` | no | events over the next `days` (1–30) |
-| `screen.capture` | no | a PNG, base64, for `display` |
-| `system.run_shortcut` | **yes** | `pending_confirmation` with the shortcut name |
+The three reads went first on purpose. They cannot do damage, they are the ones
+that make Jarvis immediately more useful, and they are where you meet the
+permission prompts for the first time — better on a command that can only read
+than on one that can send mail.
 
 Adding a capability means one decorated function. The dispatcher does not change
 — a new capability should never be a reason to touch the code that decides what
 is allowed to run.
+
+### How the live ones talk to macOS
+
+Through AppleScript in `scripts/`, run by `osascript`. The arguments arrive
+through each script's `on run argv` handler, so a search term is *data* the
+whole way down — it is never part of the script's source and never touches a
+shell. There is no `do shell script` anywhere in these files, and a test asserts
+that stays true.
+
+Each script emits one record per result, fields separated by ASCII 31 and
+records by ASCII 30. Control characters, because a subject line can contain a
+comma, a tab, a quote or a newline, and a printable delimiter would turn "Lunch,
+then dentist" into two events.
+
+Dates come back as numeric components (`2026,8,21,15,0`) rather than as text.
+AppleScript's `date string` is formatted for the machine's locale, so the same
+event reads `21/08/2026` on one Mac and `8/21/26` on another — and both parse
+wrong somewhere. The agent reassembles them and attaches the Mac's UTC offset,
+which is what makes "3pm" still mean 3pm to a server in another timezone.
+
+You can run any of them by hand, which is the fastest way to tell a permissions
+problem from a parsing one:
+
+    osascript ~/jarvis-agent/scripts/calendar_list.applescript 1
+    osascript ~/jarvis-agent/scripts/mail_recent.applescript 3
+    osascript ~/jarvis-agent/scripts/mail_search.applescript "lease" 5
+
+Output that looks like one long line with invisible separators is correct.
+
+**`mail.search` looks at subjects and senders, not message bodies.** Mail can
+search bodies with `whose content contains`, but it does so by pulling every
+message across one Apple event at a time — minutes on a real mailbox, against a
+caller that gives up after twenty seconds. The response says so in a `searched`
+field, so an empty result is never mistaken for an empty inbox.
 
 ## Install
 
 Everything here is per-user. No administrator account is needed at any point.
 
     mkdir -p ~/jarvis-agent
-    # copy jarvis_agent.py and com.jarvis.agent.plist into ~/jarvis-agent
+    # copy jarvis_agent.py, com.jarvis.agent.plist AND the scripts/ folder
+    # into ~/jarvis-agent — the AppleScripts are found next to the agent
     pip3 install --user websockets
     python3 ~/jarvis-agent/jarvis_agent.py
+
+From a Mac that can reach the server over SSH:
+
+    scp -r SERVER:Jarvis/mac-agent/jarvis_agent.py \
+           SERVER:Jarvis/mac-agent/com.jarvis.agent.plist \
+           SERVER:Jarvis/mac-agent/scripts ~/jarvis-agent/
 
 The first run creates `~/.jarvis-agent.json` (mode 600) and stops. Put the
 server URL and the shared secret in it:
@@ -142,9 +185,15 @@ family:
 
 | Pane | Needed by | What to approve |
 | --- | --- | --- |
-| **Automation** | `mail.*`, `calendar.*` | Allow the agent's Python to control **Mail** and **Calendar** — each application appears as its own checkbox under the Python entry |
-| **Full Disk Access** | `mail.search` | Add `/usr/bin/python3`. Mail's message store lives in `~/Library/Mail`, which is protected regardless of file permissions |
-| **Screen & System Audio Recording** | `screen.capture` | Add `/usr/bin/python3` |
+| **Automation** | `mail.*`, `calendar.*` | Allow **python3** to control **Mail** and **Calendar** — each application appears as its own checkbox under the python3 entry |
+| **Screen & System Audio Recording** | `screen.capture` | Add `/usr/bin/python3`. Also needs the agent restarted afterwards; macOS only re-reads this one at process start |
+
+**Full Disk Access is probably not needed, contrary to what this file said
+before.** That claim assumed reading Mail's store at `~/Library/Mail` directly.
+These scripts don't — they ask Mail.app, and Mail reads its own data, which is
+governed by Automation instead. If `mail.search` fails or returns nothing while
+Automation is clearly granted, adding `/usr/bin/python3` to Full Disk Access is
+the next thing to try, but start without it.
 
 **The prompts appear only on the first invocation of each capability, and only
 when something actually tries to use it.** That has two consequences worth

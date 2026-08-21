@@ -45,11 +45,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime as dt
+import email.utils
 import json
 import logging
 import os
 import platform
 import random
+import subprocess
 import sys
 from pathlib import Path
 
@@ -79,6 +81,11 @@ CONFIG_TEMPLATE = {
 # inflict on yourself.
 BACKOFF_START = 1.0
 BACKOFF_MAX = 60.0
+
+# How many AppleScripts may run at once. Mail and Calendar serialise Apple
+# events internally anyway, so more than a few buys nothing and a burst of
+# commands would otherwise spawn an osascript process for each.
+MAX_CONCURRENT = 3
 
 log = logging.getLogger("jarvis-agent")
 
@@ -144,37 +151,155 @@ def _int(args: dict, key: str, default: int, low: int, high: int) -> int:
     return max(low, min(high, value))
 
 
+# ------------------------------------------------------------------- osascript
+
+SCRIPTS = Path(__file__).resolve().parent / "scripts"
+
+# Under the server's 25s call timeout on purpose, so a slow Apple event produces
+# a real explanation from here rather than a bare timeout from the other end.
+OSASCRIPT_TIMEOUT = 20.0
+
+FIELD_SEP = "\x1f"
+RECORD_SEP = "\x1e"
+
+
+class CapabilityError(RuntimeError):
+    """A capability could not run — missing permission, app not running, timeout."""
+
+
+# macOS reports a refused Apple event as a number, which tells you nothing about
+# which switch to flick. Each of these is a specific instruction instead.
+TCC_HINTS = (
+    ("-1743", "macOS has not been granted permission to control that app. "
+              "System Settings > Privacy & Security > Automation, find python3, "
+              "and switch on the app you are trying to reach. If python3 is not "
+              "listed at all, the prompt was dismissed once and will not reappear."),
+    ("not authorized", "macOS has not been granted permission to control that app. "
+                       "System Settings > Privacy & Security > Automation."),
+    ("-600", "That app is not running. Open it once and try again."),
+    ("-1728", "The app answered, but the thing being asked for does not exist "
+              "(an empty mailbox or a calendar that has gone away)."),
+    ("-10004", "macOS refused the Apple event before the app saw it — usually "
+               "Automation permission that was denied rather than granted."),
+)
+
+
+def _explain(stderr: str) -> str:
+    """Turn osascript's output into something that names the fix."""
+    text = (stderr or "").strip()
+    lowered = text.lower()
+    for needle, hint in TCC_HINTS:
+        if needle in lowered:
+            return f"{hint} (osascript said: {text[:200]})"
+    return text[:300] or "osascript failed without saying why."
+
+
+def _osascript(script: str, *args) -> str:
+    """Run one of our AppleScripts with arguments.
+
+    Arguments go in as argv elements and reach the script through its `on run
+    argv` handler. They are never interpolated into the script's source and
+    never touch a shell — so a subject line containing a quote, a semicolon or
+    a full AppleScript program is inert data all the way down.
+    """
+    if platform.system() != "Darwin":
+        raise CapabilityError("This capability needs macOS; the agent is not running on a Mac.")
+
+    path = SCRIPTS / script
+    if not path.is_file():
+        raise CapabilityError(
+            f"Missing helper script {path}. Copy the whole mac-agent/scripts "
+            f"folder next to jarvis_agent.py."
+        )
+
+    argv = ["/usr/bin/osascript", str(path)] + [str(a) for a in args]
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True, timeout=OSASCRIPT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise CapabilityError(
+            f"{script} took longer than {OSASCRIPT_TIMEOUT:.0f}s. Mail and Calendar "
+            f"go slow while syncing; asking for a smaller range usually helps."
+        ) from None
+    except OSError as exc:
+        raise CapabilityError(f"Could not run osascript: {exc}") from None
+
+    if done.returncode != 0:
+        raise CapabilityError(_explain(done.stderr))
+    return done.stdout
+
+
+def _records(raw: str) -> list[list[str]]:
+    return [r.split(FIELD_SEP) for r in raw.split(RECORD_SEP) if r.strip()]
+
+
+def _iso(stamp: str) -> str:
+    """Rebuild an ISO timestamp from the numeric components AppleScript sent.
+
+    The components are local wall-clock time, so attaching the Mac's offset here
+    is what makes "3pm" mean 3pm to a server in another timezone.
+    """
+    try:
+        year, month, day, hour, minute = (int(part) for part in stamp.split(","))
+        return dt.datetime(year, month, day, hour, minute).astimezone().isoformat()
+    except (ValueError, TypeError):
+        return ""
+
+
+def _yes(value: str) -> bool:
+    return value.strip().lower() == "true"
+
+
 # ------------------------------------------------------------------- the stubs
 # Fake data, real shapes. The shapes are what later prompts wire up, so they are
 # worth getting right now: changing them later means changing every caller.
 
 
+def _messages(raw: str) -> list[dict]:
+    """Parse the shared message record shape used by both mail scripts."""
+    out = []
+    for row in _records(raw):
+        if len(row) < 5:
+            continue
+        uid, subject, sender, read_flag, stamp = row[:5]
+        # Mail hands back "Some Name <someone@example.com>" as one string. The
+        # display name is what a person recognises and the address is what a
+        # reply needs, so keep both rather than picking one.
+        name, address = email.utils.parseaddr(sender)
+        out.append({
+            "uid": uid,
+            "subject": subject,
+            "sender": name or address or sender,
+            "sender_email": address,
+            "date": _iso(stamp),
+            "unread": not _yes(read_flag),
+            "mailbox": "INBOX",
+        })
+    return out
+
+
 @command("mail.list_recent")
 def mail_list_recent(args: dict) -> dict:
     limit = _int(args, "limit", 5, 1, 50)
-    return {
-        "stub": True,
-        "messages": [
-            {"id": f"stub-{i}", "subject": f"Placeholder message {i}",
-             "sender": "someone@example.com", "unread": i == 1,
-             "received": "2026-08-21T09:00:00Z"}
-            for i in range(1, limit + 1)
-        ],
-    }
+    messages = _messages(_osascript("mail_recent.applescript", limit))
+    return {"source": "Mail.app", "messages": messages, "count": len(messages)}
 
 
 @command("mail.search")
 def mail_search(args: dict) -> dict:
     query = _string(args, "query")
     limit = _int(args, "limit", 5, 1, 50)
+    if not query.strip():
+        raise ValueError("query cannot be empty")
+    messages = _messages(_osascript("mail_search.applescript", query, limit))
     return {
-        "stub": True,
+        "source": "Mail.app",
         "query": query,
-        "messages": [
-            {"id": f"stub-hit-{i}", "subject": f"Result {i} for {query!r}",
-             "sender": "someone@example.com", "received": "2026-08-20T14:30:00Z"}
-            for i in range(1, min(limit, 3) + 1)
-        ],
+        "messages": messages,
+        "count": len(messages),
+        # Said plainly so an empty result is not read as an empty inbox. Body
+        # search through AppleScript pulls every message across one at a time
+        # and takes minutes on a real mailbox.
+        "searched": "subject and sender, not message bodies",
     }
 
 
@@ -190,15 +315,25 @@ def mail_draft(args: dict) -> dict:
 @command("calendar.list_events")
 def calendar_list_events(args: dict) -> dict:
     days = _int(args, "days", 1, 1, 30)
-    return {
-        "stub": True,
-        "days": days,
-        "events": [
-            {"id": "stub-event-1", "summary": "Placeholder appointment",
-             "start": "2026-08-21T15:00:00Z", "end": "2026-08-21T16:00:00Z",
-             "calendar": "Home"},
-        ],
-    }
+    events = []
+    for row in _records(_osascript("calendar_list.applescript", days)):
+        if len(row) < 7:
+            continue
+        uid, summary, calendar, location, all_day, start, end = row[:7]
+        events.append({
+            "uid": uid,
+            "summary": summary,
+            "calendar": calendar,
+            "location": location,
+            "all_day": _yes(all_day),
+            "start": _iso(start),
+            "end": _iso(end),
+        })
+    # Calendar returns each calendar's events in its own order, so the merged
+    # list is grouped by calendar rather than by time — which is not the order
+    # anyone means by "what's on today".
+    events.sort(key=lambda e: e["start"])
+    return {"source": "Calendar.app", "days": days, "events": events, "count": len(events)}
 
 
 @command("screen.capture")
@@ -259,6 +394,12 @@ def dispatch(message: dict) -> dict:
         payload = entry["handler"](args)
     except ValueError as exc:
         audit(name, args, f"bad arguments: {exc}")
+        return {"id": call_id, "ok": False, "error": str(exc)}
+    except CapabilityError as exc:
+        # Expected and explainable: a permission not granted, an app not open, a
+        # sync taking too long. The message already names the fix, so it goes
+        # back verbatim rather than being flattened into "something went wrong".
+        audit(name, args, f"unavailable: {exc}")
         return {"id": call_id, "ok": False, "error": str(exc)}
     except Exception as exc:                       # noqa: BLE001
         audit(name, args, f"failed: {exc}")
@@ -327,13 +468,43 @@ def _headers(config: dict) -> dict:
 async def session(config: dict) -> None:
     async with _connect(config["server"], _headers(config)) as socket:
         log.info("Connected to %s", config["server"])
-        async for raw in socket:
+
+        # AppleScript blocks for seconds at a time. Running it on the event loop
+        # would stop this socket answering its own keepalive pings, and the
+        # connection would drop halfway through the very command that was
+        # working — so every handler goes to a thread.
+        send_lock = asyncio.Lock()
+        slots = asyncio.Semaphore(MAX_CONCURRENT)
+        running: set = set()
+
+        async def handle(message: dict) -> None:
             try:
-                message = json.loads(raw)
-            except ValueError:
-                continue
-            reply = dispatch(message)
-            await socket.send(json.dumps(reply))
+                async with slots:
+                    reply = await asyncio.to_thread(dispatch, message)
+                # One writer at a time: concurrent sends on one WebSocket
+                # interleave frames, and a torn frame kills the connection.
+                async with send_lock:
+                    await socket.send(json.dumps(reply))
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:                  # noqa: BLE001
+                log.warning("Could not answer %s: %s", message.get("command"), exc)
+
+        try:
+            async for raw in socket:
+                try:
+                    message = json.loads(raw)
+                except ValueError:
+                    continue
+                task = asyncio.ensure_future(handle(message))
+                running.add(task)
+                task.add_done_callback(running.discard)
+        finally:
+            # The socket is going away; anything still waiting on it cannot be
+            # answered, and leaving the tasks running would pile up osascript
+            # processes across every reconnect.
+            for task in list(running):
+                task.cancel()
 
 
 async def run() -> None:

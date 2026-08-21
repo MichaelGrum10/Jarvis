@@ -179,10 +179,21 @@ def test_arguments_must_be_the_type_they_claim():
     assert reply["ok"] is False
 
 
-def test_integer_arguments_are_clamped_not_refused():
+def test_integer_arguments_are_clamped_not_refused(monkeypatch):
+    """An absurd limit is capped, not rejected — and the cap is what reaches
+    AppleScript, so nobody can ask Mail for a million messages."""
+    seen = {}
+
+    def fake(script, *args):
+        seen["script"], seen["args"] = script, args
+        return ""
+
+    monkeypatch.setattr(agent_mod, "_osascript", fake)
     reply = agent_mod.dispatch({"id": "x", "command": "mail.list_recent", "args": {"limit": 9999}})
+
     assert reply["ok"] is True
-    assert len(reply["data"]["messages"]) == 50
+    assert seen["args"] == (50,)
+    assert seen["script"] == "mail_recent.applescript"
 
 
 # -------------------------------------------------------------- the write gate
@@ -199,8 +210,13 @@ def test_writes_return_a_proposal_instead_of_acting(command, args):
     assert reply["data"]["proposed"]
 
 
-def test_reads_do_not_come_back_pending():
+def test_reads_do_not_come_back_pending(monkeypatch):
+    monkeypatch.setattr(
+        agent_mod, "_osascript",
+        lambda *a: "u\x1fStandup\x1fWork\x1f\x1ffalse\x1f2026,8,21,9,0\x1f2026,8,21,9,15\x1e",
+    )
     reply = agent_mod.dispatch({"id": "x", "command": "calendar.list_events", "args": {"days": 2}})
+
     assert reply["data"].get("status") != "pending_confirmation"
     assert reply["data"]["events"]
 
@@ -210,6 +226,135 @@ def test_every_write_command_is_marked_as_one():
     read would act on the spot, so the flags themselves are the assertion."""
     writes = {name for name, entry in agent_mod.COMMANDS.items() if entry["writes"]}
     assert writes == {"mail.draft", "system.run_shortcut"}
+
+
+# ------------------------------------------------ parsing what AppleScript says
+
+# Exactly the bytes the scripts emit: ASCII 31 between fields, ASCII 30 between
+# records, dates as local wall-clock components.
+FS = "\x1f"
+RS = "\x1e"
+
+
+def _canned(monkeypatch, output):
+    monkeypatch.setattr(agent_mod, "_osascript", lambda *a, **k: output)
+
+
+def test_calendar_events_are_parsed_and_sorted(monkeypatch):
+    _canned(monkeypatch, (
+        f"uid-2{FS}Dentist{FS}Home{FS}Baker St{FS}false{FS}2026,8,21,15,0{FS}2026,8,21,16,0{RS}"
+        f"uid-1{FS}Standup{FS}Work{FS}{FS}false{FS}2026,8,21,9,30{FS}2026,8,21,9,45{RS}"
+    ))
+    out = agent_mod.dispatch({"id": "x", "command": "calendar.list_events", "args": {"days": 1}})
+
+    assert out["ok"] is True
+    events = out["data"]["events"]
+    assert [e["summary"] for e in events] == ["Standup", "Dentist"]     # by time, not calendar
+    assert events[0]["start"].startswith("2026-08-21T09:30")
+    assert events[1]["location"] == "Baker St"
+    assert out["data"]["count"] == 2
+
+
+def test_a_summary_containing_a_comma_stays_one_event(monkeypatch):
+    """The reason the delimiters are control characters and not commas."""
+    _canned(monkeypatch, f"u{FS}Lunch, then dentist{FS}Home{FS}{FS}false{FS}2026,8,21,12,0{FS}2026,8,21,13,0{RS}")
+    out = agent_mod.dispatch({"id": "x", "command": "calendar.list_events", "args": {}})
+
+    assert out["data"]["count"] == 1
+    assert out["data"]["events"][0]["summary"] == "Lunch, then dentist"
+
+
+def test_all_day_events_are_flagged(monkeypatch):
+    _canned(monkeypatch, f"u{FS}Bank holiday{FS}Home{FS}{FS}true{FS}2026,8,25,0,0{FS}2026,8,26,0,0{RS}")
+    out = agent_mod.dispatch({"id": "x", "command": "calendar.list_events", "args": {}})
+
+    assert out["data"]["events"][0]["all_day"] is True
+
+
+def test_mail_senders_are_split_into_name_and_address(monkeypatch):
+    _canned(monkeypatch, (
+        f"id-1{FS}Lease renewal{FS}Ada Lovelace <ada@example.com>{FS}false{FS}2026,8,21,9,0{RS}"
+    ))
+    out = agent_mod.dispatch({"id": "x", "command": "mail.list_recent", "args": {"limit": 5}})
+
+    message = out["data"]["messages"][0]
+    assert message["sender"] == "Ada Lovelace"
+    assert message["sender_email"] == "ada@example.com"
+    assert message["unread"] is True            # read status false means unread
+    assert message["date"].startswith("2026-08-21T09:00")
+
+
+def test_a_bare_address_still_parses(monkeypatch):
+    _canned(monkeypatch, f"id-1{FS}Hello{FS}someone@example.com{FS}true{FS}2026,8,21,9,0{RS}")
+    out = agent_mod.dispatch({"id": "x", "command": "mail.list_recent", "args": {}})
+
+    message = out["data"]["messages"][0]
+    assert message["sender"] == "someone@example.com"
+    assert message["unread"] is False
+
+
+def test_an_empty_inbox_is_not_an_error(monkeypatch):
+    _canned(monkeypatch, "")
+    out = agent_mod.dispatch({"id": "x", "command": "mail.list_recent", "args": {}})
+
+    assert out["ok"] is True
+    assert out["data"]["messages"] == []
+
+
+def test_truncated_records_are_skipped_rather_than_crashing(monkeypatch):
+    """A half-written record loses one event; an exception loses all of them."""
+    _canned(monkeypatch, f"u{FS}Broken{RS}u2{FS}Fine{FS}Home{FS}{FS}false{FS}2026,8,21,9,0{FS}2026,8,21,10,0{RS}")
+    out = agent_mod.dispatch({"id": "x", "command": "calendar.list_events", "args": {}})
+
+    assert [e["summary"] for e in out["data"]["events"]] == ["Fine"]
+
+
+def test_mail_search_says_what_it_actually_searched(monkeypatch):
+    _canned(monkeypatch, "")
+    out = agent_mod.dispatch({"id": "x", "command": "mail.search", "args": {"query": "rent"}})
+
+    assert "not message bodies" in out["data"]["searched"]
+
+
+def test_an_empty_search_is_refused(monkeypatch):
+    _canned(monkeypatch, "")
+    out = agent_mod.dispatch({"id": "x", "command": "mail.search", "args": {"query": "   "}})
+
+    assert out["ok"] is False
+
+
+def test_a_refused_apple_event_names_the_settings_pane():
+    explained = agent_mod._explain(
+        "execution error: Not authorized to send Apple events to Mail. (-1743)"
+    )
+    assert "Automation" in explained
+    assert "-1743" in explained          # the original is kept for searching
+
+
+def test_a_missing_helper_script_says_so(monkeypatch):
+    monkeypatch.setattr(agent_mod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(agent_mod, "SCRIPTS", Path("/nowhere/at/all"))
+    out = agent_mod.dispatch({"id": "x", "command": "calendar.list_events", "args": {}})
+
+    assert out["ok"] is False
+    assert "Missing helper script" in out["error"]
+
+
+def test_capabilities_that_need_macos_say_so_off_macos():
+    """The agent is importable and testable on Linux; it just cannot do this."""
+    out = agent_mod.dispatch({"id": "x", "command": "mail.list_recent", "args": {}})
+
+    assert out["ok"] is False
+    assert "macOS" in out["error"]
+
+
+def test_the_applescripts_exist_and_take_their_arguments_from_argv():
+    """No command string anywhere: arguments arrive through `on run argv`."""
+    scripts = Path(__file__).resolve().parents[2] / "mac-agent" / "scripts"
+    for name in ("calendar_list", "mail_recent", "mail_search"):
+        source = (scripts / f"{name}.applescript").read_text()
+        assert "on run argv" in source
+        assert "do shell script" not in source
 
 
 # ------------------------------------------------------------------- the link
