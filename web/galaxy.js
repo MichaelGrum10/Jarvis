@@ -19,7 +19,7 @@
  * and is unreachable from a phone without an SSH tunnel.
  */
 
-const LIB = '/static/vendor/3d-force-graph.min.js?v=18';
+const LIB = '/static/vendor/3d-force-graph.min.js?v=19';
 
 let graph = null;          // the ForceGraph3D instance
 let deps = { api: null };
@@ -431,6 +431,99 @@ async function askVault() {
 
 
 
+
+/**
+ * Refetch the graph and hand it back without the galaxy jumping.
+ *
+ * Node ids are array positions, so any addition renumbers everything after it
+ * and the only safe move is to take the server's numbering wholesale. What
+ * makes that invisible is carrying each existing node's settled coordinates
+ * across by label: the layout does not re-run, nothing reshuffles, and only
+ * genuinely new nodes have anywhere to travel from.
+ */
+async function mergeGraph(anchor = null) {
+  const fresh = await deps.api('/api/notes/graph?refresh=true');
+  const previous = new Map([...byId.values()].map((n) => [n.label, n]));
+
+  const pinned = [];
+  for (const node of fresh.nodes) {
+    const old = previous.get(node.label);
+    if (old && Number.isFinite(old.x)) {
+      node.x = old.x; node.y = old.y; node.z = old.z;
+      node.vx = 0; node.vy = 0; node.vz = 0;
+      // Seeding the position is not enough: graphData() restarts the
+      // simulation, and over its five-second cooldown everything re-settles
+      // around the new member. Measured, a loosely-linked node drifted 31% of
+      // the graph's radius — a jump, not a settle. fx/fy/fz pin a node
+      // outright, so only the newcomer travels. Released below, or the layout
+      // would be frozen forever after.
+      node.fx = old.x; node.fy = old.y; node.fz = old.z;
+      pinned.push(node);
+    } else if (anchor && Number.isFinite(anchor.x)) {
+      // Born beside its closest relative rather than at the origin, so it
+      // reads as the vault growing rather than something falling in.
+      node.x = anchor.x + 12; node.y = anchor.y + 12; node.z = anchor.z + 12;
+    }
+  }
+
+  generation = fresh.generation || '';
+  graph.graphData(fresh);
+  byId = new Map(fresh.nodes.map((n) => [n.id, n]));
+  neighbours = new Map(fresh.nodes.map((n) => [n.id, new Set()]));
+  for (const link of fresh.links) {
+    const [a, b] = ends(link);
+    if (neighbours.has(a)) neighbours.get(a).add(b);
+    if (neighbours.has(b)) neighbours.get(b).add(a);
+  }
+
+  // Long enough for the newcomer to find its place, short enough that the
+  // layout is live again before anyone drags it.
+  setTimeout(() => {
+    for (const node of pinned) { node.fx = null; node.fy = null; node.fz = null; }
+  }, 2500);
+
+  return fresh;
+}
+
+/* ---------------- watching for notes that arrive on their own ---------------- */
+
+/* Answers never go stale — the vault is re-indexed on every question — but the
+   graph in front of you does, and a note written on your phone would sit
+   invisible until you reopened the galaxy. So while it is open, ask what the
+   vault's fingerprint is every half minute. That is one small request against a
+   cached index, and only a genuine change costs a refetch. */
+const WATCH_MS = 30_000;
+let watchTimer = null;
+
+function startVaultWatch() {
+  if (watchTimer) return;
+  watchTimer = setInterval(async () => {
+    if (!graph || !galaxyIsOpen()) return;
+    try {
+      const { generation: current } = await deps.api('/api/notes/summary');
+      if (!current || current === generation) return;
+
+      const known = new Set([...byId.values()].map((n) => n.label));
+      const fresh = await mergeGraph();
+      const arrived = fresh.nodes.filter((n) => !known.has(n.label));
+      if (!arrived.length) return;
+
+      status(`${arrived.length} note${arrived.length === 1 ? '' : 's'} arrived`);
+      pulseNode = arrived[0].id;
+      pulseUntil = Date.now() + PULSE_MS;
+      const beat = setInterval(repaint, 60);
+      setTimeout(() => { clearInterval(beat); pulseNode = null; repaint(); }, PULSE_MS);
+    } catch {
+      // A failed poll is not worth a message. The next one is 30s away.
+    }
+  }, WATCH_MS);
+}
+
+function stopVaultWatch() {
+  clearInterval(watchTimer);
+  watchTimer = null;
+}
+
 /**
  * Write a note and grow the galaxy around it, without a reload.
  *
@@ -456,31 +549,7 @@ async function rememberThat(text) {
   // appears to grow out of the vault rather than fall into it from nowhere.
   const anchor = res.near ? [...byId.values()].find((n) => n.label === res.near) : null;
 
-  const fresh = await deps.api('/api/notes/graph?refresh=true');
-  const previous = new Map([...byId.values()].map((n) => [n.label, n]));
-
-  for (const node of fresh.nodes) {
-    const old = previous.get(node.label);
-    if (old && Number.isFinite(old.x)) {
-      // Carry the settled position over, so the whole galaxy doesn't reshuffle
-      // around one addition.
-      node.x = old.x; node.y = old.y; node.z = old.z;
-      node.vx = 0; node.vy = 0; node.vz = 0;
-    } else if (anchor && Number.isFinite(anchor.x)) {
-      node.x = anchor.x + 12; node.y = anchor.y + 12; node.z = anchor.z + 12;
-    }
-  }
-
-  generation = fresh.generation || '';
-  graph.graphData(fresh);
-  byId = new Map(fresh.nodes.map((n) => [n.id, n]));
-  neighbours = new Map(fresh.nodes.map((n) => [n.id, new Set()]));
-  for (const link of fresh.links) {
-    const [a, b] = ends(link);
-    if (neighbours.has(a)) neighbours.get(a).add(b);
-    if (neighbours.has(b)) neighbours.get(b).add(a);
-  }
-
+  const fresh = await mergeGraph(anchor);
   const born = fresh.nodes.find((n) => n.label === res.note.label);
   if (!born) return;
 
@@ -582,10 +651,12 @@ export async function openGalaxy(ids) {
     graph.resumeAnimation();
   }
 
+  startVaultWatch();
   if (ids && ids.length) flyTo(ids);
 }
 
 export function closeGalaxy() {
+  stopVaultWatch();
   $('galaxy').classList.add('hidden');
   $('galaxy-note').classList.add('hidden');
   stopStars();

@@ -15,8 +15,8 @@ const WAKE_RESTART_MS = 400;
 const MAX_UTTERANCE_MS = 15000;
 const SILENCE_MS = 1400;
 
-import { getVoicesAsync, pickBritishVoice, unlockSpeech, IS_WEBKIT }
-  from '/static/voice.js?v=18';
+import { getVoicesAsync, pickBritishVoice, unlockSpeech, IS_WEBKIT, primeSpeech }
+  from '/static/voice.js?v=19';
 
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -294,7 +294,7 @@ export class JarvisVoice {
     if (!clean) { onEnd?.(); return; }
 
     window.speechSynthesis.cancel();
-    unlockSpeech();      // no-op unless a gesture already primed the engine
+    primeSpeech();   // resume() every time — Safari pauses the engine unbidden
     const chunks = chunkForSpeech(clean);
     this.speaking = true;
     onStart?.();

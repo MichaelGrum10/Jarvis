@@ -70,6 +70,25 @@ export function unlockSpeech() {
 
 export const speechUnlocked = () => unlocked;
 
+/**
+ * Call before every speak(), not just the first.
+ *
+ * unlockSpeech() runs once by design — the silent utterance only needs saying
+ * once. resume() is different: Safari pauses the synthesis engine when the tab
+ * is backgrounded, when a call or another audio session interrupts, and
+ * sometimes for no reason it shares. A paused engine accepts speak() and queues
+ * it forever, with no error and no sound, which presents as "it worked once and
+ * then went quiet". Resuming unconditionally costs nothing on an engine that is
+ * already running.
+ */
+export function primeSpeech() {
+  if (!voiceSupport.synthesis) return;
+  try {
+    window.speechSynthesis.resume();
+  } catch { /* not fatal; the speak below may still work */ }
+  unlockSpeech();
+}
+
 /* ---------------- voice list ---------------- */
 
 let voicesPromise = null;
@@ -310,10 +329,9 @@ export class Speaker {
     if (!clean) return;
 
     this.cancel();
-    // If the page has never had a gesture, this is a no-op and Safari will stay
-    // silent — but on the path where a gesture did happen and something reset
-    // the engine, resume() inside unlockSpeech revives it.
-    unlockSpeech();
+    // Every time: resume() revives an engine Safari paused behind our back,
+    // which is the difference between "works once" and "keeps working".
+    primeSpeech();
     // Long replies get chunked at sentence boundaries: Safari stops at roughly
     // 200-250 characters and Chrome truncates too, both without an error.
     const chunks = chunkForSpeech(clean);
@@ -355,8 +373,12 @@ export function speakable(text) {
     .trim();
 }
 
-/** Split into utterances Chrome won't truncate, breaking on sentences. */
-export function chunkForSpeech(text, limit = 200) {
+/** Split into utterances the engine won't truncate, breaking on sentences.
+ *
+ * Safari stops somewhere around 200-250 characters and gives no indication it
+ * did — the sentence simply ends. 200 sits right on that edge, so WebKit gets
+ * 180 and the margin. */
+export function chunkForSpeech(text, limit = IS_WEBKIT ? 180 : 200) {
   const sentences = text.match(/[^.!?]+[.!?]*\s*/g) || [text];
   const chunks = [];
   let current = '';

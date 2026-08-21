@@ -501,3 +501,19 @@ def test_a_title_that_is_illegal_as_a_filename_is_made_safe(vault, tmp_path):
     assert "/" not in note.title and ":" not in note.title
     assert not note.title.startswith(".")
     assert (tmp_path / "captures" / f"{note.title}.md").exists()
+
+
+def test_summary_carries_the_generation_for_polling(api):
+    """The open galaxy polls this to notice a note that arrived from the phone,
+    so it has to agree with the graph's own fingerprint or every poll would
+    look like a change."""
+    summary = api.get("/api/notes/summary").json()
+    graph = api.get("/api/notes/graph").json()
+    assert summary["generation"] == graph["generation"]
+
+
+def test_the_generation_moves_when_a_note_is_added(api, tmp_path):
+    before = api.get("/api/notes/summary").json()["generation"]
+    (tmp_path / "Carthage.md").write_text("Delenda est.\n")
+    after = api.get("/api/notes/summary").json()["generation"]
+    assert before != after, "a new note must change the fingerprint or the watcher never fires"

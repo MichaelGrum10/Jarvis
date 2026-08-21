@@ -200,10 +200,15 @@ async def summary(device: CurrentDevice):
     """
     if vault.notes_dir() is None:
         return {"notes": 0, "folders": 0, "configured": False}
-    notes = vault.get_vault().load()
+    store = vault.get_vault()
+    notes = store.load()
     return {
         "notes": len(notes),
         "folders": len({n.folder for n in notes}),
+        # Cheap enough to poll: load() is cached behind an mtime check, so this
+        # is a hash of an already-warm list. It is what lets an open galaxy
+        # notice a note that arrived from the phone.
+        "generation": store.signature(),
         "configured": True,
     }
 
