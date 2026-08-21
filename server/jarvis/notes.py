@@ -19,6 +19,7 @@ cheaper than maintaining a database that could disagree with the files.
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import logging
 import os
 import re
@@ -158,6 +159,23 @@ class Vault:
 
         scored.sort(key=lambda pair: (-pair[1], pair[0].title))
         return scored[:limit]
+
+    def signature(self) -> str:
+        """A short fingerprint of which notes, at which versions, are indexed.
+
+        Node ids are positions in the graph array, so an answer citing "node 12"
+        is only meaningful against the graph it was computed from — and
+        Syncthing can rewrite the vault between a page load and a question,
+        silently renumbering everything. The viewer sends this back so a
+        mismatch can be reported rather than the camera flying to the wrong
+        star.
+        """
+        notes = self.load()
+        digest = hashlib.sha1(usedforsecurity=False)
+        for note in notes:
+            digest.update(str(note.path).encode("utf-8"))
+            digest.update(f"{note.modified:.0f}".encode())
+        return digest.hexdigest()[:12]
 
     def graph(self) -> dict:
         """Nodes and links for the viewer.

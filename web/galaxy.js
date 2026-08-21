@@ -19,7 +19,7 @@
  * and is unreachable from a phone without an SSH tunnel.
  */
 
-const LIB = '/static/vendor/3d-force-graph.min.js?v=13';
+const LIB = '/static/vendor/3d-force-graph.min.js?v=14';
 
 let graph = null;          // the ForceGraph3D instance
 let deps = { api: null };
@@ -32,6 +32,8 @@ let highlight = new Set();
 let pendingFly = null;     // ids to fly to once the layout has coordinates
 let fitted = false;        // whether the opening zoom-to-fit has happened
 let starTimer = null;
+let generation = '';   // which graph the browser is holding
+let session = '';      // per-tab, so follow-up questions have context
 
 function $(id) { return document.getElementById(id); }
 
@@ -320,6 +322,70 @@ async function showNote(node) {
   }
 }
 
+
+/* ---------------- asking the vault ---------------- */
+
+function renderAnswer(text, ids, warning, isError) {
+  const box = $('galaxy-answer');
+  box.classList.remove('hidden');
+  box.innerHTML = '';
+
+  const body = document.createElement('div');
+  if (isError) body.className = 'err';
+  // textContent, never innerHTML: this is the user's own writing coming back.
+  body.textContent = text;
+  box.appendChild(body);
+
+  if (ids && ids.length) {
+    const row = document.createElement('div');
+    row.className = 'sources';
+    for (const id of ids) {
+      const node = byId.get(id);
+      if (!node) continue;
+      const chip = document.createElement('button');
+      chip.className = 'src';
+      chip.textContent = node.label;
+      chip.onclick = () => select(node);
+      row.appendChild(chip);
+    }
+    if (row.children.length) box.appendChild(row);
+  }
+
+  if (warning) {
+    const warn = document.createElement('div');
+    warn.className = 'warn';
+    warn.textContent = warning;
+    box.appendChild(warn);
+  }
+}
+
+async function askVault() {
+  const input = $('ask-input');
+  const send = $('ask-send');
+  const question = input.value.trim();
+  if (!question) return;
+
+  send.disabled = true;
+  renderAnswer('Reading your notes…', null, null, false);
+
+  try {
+    const res = await deps.api('/api/notes/ask', {
+      method: 'POST',
+      body: JSON.stringify({ question, session, generation }),
+    });
+    const warning = res.stale
+      ? 'Your notes changed since this opened — the highlighted stars may be wrong. Reopen the galaxy.'
+      : null;
+    renderAnswer(res.answer, res.nodes, warning, false);
+    if (!res.stale && res.nodes && res.nodes.length) flyTo(res.nodes);
+    input.value = '';
+  } catch (err) {
+    renderAnswer(err.message, null, null, true);
+  } finally {
+    send.disabled = false;
+  }
+}
+
 /* ---------------- public API ---------------- */
 
 export async function openGalaxy(ids) {
@@ -328,7 +394,15 @@ export async function openGalaxy(ids) {
 
   if (!starTimer) startStars();
 
+  if (!session) {
+    session = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+
   if (!graph) {
+    $('ask-send').onclick = askVault;
+    $('ask-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); askVault(); }
+    });
     $('galaxy-close').onclick = closeGalaxy;
     $('galaxy-reset').onclick = () => {
       clearSelection();
@@ -355,6 +429,7 @@ export async function openGalaxy(ids) {
       await loadLibrary();
       const data = await deps.api('/api/notes/graph');
       if (!data.nodes.length) return status('No notes in your vault yet.');
+      generation = data.generation || '';
       build(data);
       loaded = true;
     } catch (err) {
@@ -392,6 +467,7 @@ export function galaxyFlyTo(ids) {
 export function galaxyInvalidate() {
   loaded = false;
   fitted = false;
+  generation = '';
   if (graph) { graph._destructor?.(); graph = null; }
   const host = $('galaxy-graph');
   if (host) host.innerHTML = '';

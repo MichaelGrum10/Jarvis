@@ -286,3 +286,108 @@ def test_a_capture_still_succeeds_when_chown_is_refused(vault, monkeypatch):
     note = vault.capture("Written despite the chown failing")
     assert note.title
     assert vault.search("chown failing")
+
+
+# --- asking the vault ---
+
+
+@pytest.fixture
+def stub_llm(monkeypatch):
+    """Replace the endpoint pool with something that records what it was sent."""
+    from jarvis.api import notes as api_notes
+
+    seen = {}
+
+    class Reply:
+        content = "Rome fought three Punic Wars, per your Punic Wars note."
+
+    class Fake:
+        async def complete(self, messages, **kwargs):
+            seen["messages"] = messages
+            seen["kwargs"] = kwargs
+            return Reply()
+
+    monkeypatch.setattr(api_notes, "get_llm", lambda: Fake())
+    api_notes._SESSIONS.clear()
+    return seen
+
+
+def test_asking_puts_the_matching_notes_in_the_system_prompt(api, stub_llm):
+    body = api.post("/api/notes/ask", json={"question": "tell me about the punic wars"}).json()
+
+    system = stub_llm["messages"][0]
+    assert system["role"] == "system"
+    assert "146 BC" in system["content"], "the matching note's text must be in front of the model"
+    assert "ONLY from the notes" in system["content"]
+    assert body["answer"].startswith("Rome fought three")
+
+
+def test_the_cited_nodes_are_graph_indexes(api, stub_llm):
+    graph = api.get("/api/notes/graph").json()
+    body = api.post("/api/notes/ask", json={"question": "punic wars"}).json()
+
+    assert body["nodes"]
+    for node in body["nodes"]:
+        # This is the whole reason the generation fingerprint exists: a cited
+        # id that doesn't index the graph sends the camera to the wrong star.
+        assert graph["nodes"][node]["label"] in {"Punic Wars", "Rome"}
+
+
+def test_a_question_matching_nothing_still_answers(api, stub_llm):
+    body = api.post("/api/notes/ask", json={"question": "xylophone manufacturing"}).json()
+
+    assert body["nodes"] == []
+    assert "No notes matched" in stub_llm["messages"][0]["content"]
+
+
+def test_follow_ups_carry_the_previous_exchange(api, stub_llm):
+    api.post("/api/notes/ask", json={"question": "punic wars", "session": "s"})
+    api.post("/api/notes/ask", json={"question": "and how many?", "session": "s"})
+
+    roles = [m["role"] for m in stub_llm["messages"]]
+    assert roles == ["system", "user", "assistant", "user"]
+
+
+def test_sessions_do_not_share_history(api, stub_llm):
+    api.post("/api/notes/ask", json={"question": "punic wars", "session": "a"})
+    api.post("/api/notes/ask", json={"question": "punic wars", "session": "b"})
+
+    assert [m["role"] for m in stub_llm["messages"]] == ["system", "user"]
+
+
+def test_a_changed_vault_is_reported_as_stale(api, stub_llm):
+    fresh = api.post("/api/notes/ask", json={"question": "punic wars"}).json()
+    assert fresh["stale"] is False
+
+    stale = api.post(
+        "/api/notes/ask",
+        json={"question": "punic wars", "generation": "not-the-current-one"},
+    ).json()
+    assert stale["stale"] is True
+    assert stale["generation"] == fresh["generation"]
+
+
+def test_asking_needs_a_device_token(api):
+    del api.headers["Authorization"]
+    assert api.post("/api/notes/ask", json={"question": "hi"}).status_code == 401
+
+
+def test_an_empty_question_is_refused(api, stub_llm):
+    assert api.post("/api/notes/ask", json={"question": "   "}).status_code == 400
+
+
+def test_a_pool_failure_surfaces_the_pool_s_own_message(api, monkeypatch):
+    from jarvis.api import notes as api_notes
+    from jarvis.llm.client import LLMError
+
+    class Broken:
+        async def complete(self, *a, **k):
+            raise LLMError("No endpoint could answer (tried 2, 1 cooling: groq)")
+
+    monkeypatch.setattr(api_notes, "get_llm", lambda: Broken())
+    res = api.post("/api/notes/ask", json={"question": "punic wars"})
+
+    assert res.status_code == 503
+    # The pool names which endpoints it tried and why each declined; that is far
+    # more actionable than "the model failed".
+    assert "1 cooling" in res.json()["detail"]

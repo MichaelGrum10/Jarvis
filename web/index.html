@@ -10,8 +10,8 @@
 <title>Jarvis</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/style.css?v=13">
-<link rel="stylesheet" href="/static/hud.css?v=13">
+<link rel="stylesheet" href="/static/style.css?v=14">
+<link rel="stylesheet" href="/static/hud.css?v=14">
 </head>
 <body>
 
@@ -154,12 +154,24 @@
   <canvas id="galaxy-stars"></canvas>
   <div id="galaxy-graph"></div>
   <div class="galaxy-bar">
-    <input id="galaxy-search" type="search" placeholder="Search your notes…"
+    <input id="galaxy-search" type="search" placeholder="Find a note by name…"
            autocomplete="off" autocapitalize="none">
     <button id="galaxy-reset" class="icon-btn" title="Show everything">⤢</button>
     <button id="galaxy-close" class="icon-btn" aria-label="Close galaxy">✕</button>
   </div>
   <div id="galaxy-status" class="galaxy-status hidden"></div>
+
+  <!-- Ask the vault from inside the galaxy. The answer names its sources and
+       the camera flies to them. -->
+  <div id="galaxy-ask">
+    <div id="galaxy-answer" class="hidden"></div>
+    <div class="ask-row">
+      <input id="ask-input" type="text" autocomplete="off" autocapitalize="sentences"
+             placeholder="Ask your notes…">
+      <button id="ask-send" aria-label="Ask">↑</button>
+    </div>
+  </div>
+
   <div id="galaxy-note" class="galaxy-note hidden"></div>
 </div>
 
@@ -232,6 +244,6 @@
   });
 })();
 </script>
-<script type="module" src="/static/app.js?v=13"></script>
+<script type="module" src="/static/app.js?v=14"></script>
 </body>
 </html>

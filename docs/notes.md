@@ -98,15 +98,20 @@ Open it from ☰ → **Knowledge galaxy**, or the **Galaxy** button on the voice
   them up, along with everything they link to.
 - **⤢** pulls back out to the whole vault.
 
-Ask a question by voice with the galaxy open and it flies to the notes the
-answer came from as the answer arrives. That is the point of the thing: you can
-see which of your own notes Jarvis used, and go read them.
+There is an ask bar at the bottom. Type a question and it answers from your
+notes alone — naming the notes it used, flying the camera to them, and saying
+plainly when your notes don't cover it rather than filling the gap from general
+knowledge. Asking by voice from the main chat does the same thing while the
+galaxy is open.
 
-It is drawn on a plain 2D canvas with a hand-written perspective projection —
-no WebGL, no library, nothing fetched from a CDN, so it works with the phone
-offline. The layout places folders as clusters on a sphere and lets links pull
-notes together; it is honest about folders and honest about links, and does not
-claim to be a global energy minimum.
+The answer goes through the same endpoint pool as everything else, so it fails
+over across every configured provider rather than dying when one is busy.
+
+It is drawn with 3d-force-graph, vendored into `web/vendor/` rather than pulled
+from a CDN: this app is served from your own box behind your own password, and
+a CDN tag would hand a third party a request every time you open it. The bundle
+is 1.3MB and loads lazily on first open, so it costs nothing on the sessions
+where you never look at the galaxy.
 
 ---
 

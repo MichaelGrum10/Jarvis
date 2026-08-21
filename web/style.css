@@ -392,3 +392,63 @@ html, body {
   color: var(--text);
   font-size: 13px;
 }
+
+/* ---------- asking the galaxy ---------- */
+#galaxy-ask {
+  position: absolute;
+  left: 50%;
+  bottom: calc(16px + var(--safe-b));
+  transform: translateX(-50%);
+  z-index: 3;                 /* above the WebGL layer, below the note sheet */
+  width: min(680px, calc(100% - 24px));
+}
+.ask-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 5px 5px 16px;
+  background: rgba(12, 18, 27, .88);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 10px 34px rgba(0,0,0,.5);
+}
+#ask-input {
+  flex: 1;
+  background: none; border: none; outline: none;
+  color: var(--text);
+  font-size: 15px;            /* 16px or under, or iOS zooms the page on focus */
+  padding: 10px 0;
+}
+#ask-input::placeholder { color: #61748c; }
+#ask-send {
+  width: 36px; height: 36px; flex: none;
+  border: none; border-radius: 50%;
+  background: var(--accent); color: #04121f;
+  font-size: 17px; cursor: pointer;
+}
+#ask-send:disabled { opacity: .45; }
+
+#galaxy-answer {
+  margin-bottom: 10px;
+  padding: 15px 18px;
+  background: rgba(12, 18, 27, .93);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  backdrop-filter: blur(14px);
+  font-size: 14.5px;
+  line-height: 1.6;
+  max-height: 38vh;
+  overflow-y: auto;
+}
+#galaxy-answer.hidden { display: none; }
+#galaxy-answer .sources { margin-top: 11px; display: flex; flex-wrap: wrap; gap: 6px; }
+#galaxy-answer .src {
+  padding: 5px 11px;
+  background: var(--accent-dim);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--text); font-size: 12px; cursor: pointer;
+}
+#galaxy-answer .warn { margin-top: 9px; color: var(--warn); font-size: 12px; }
+#galaxy-answer .err { color: var(--bad); }
