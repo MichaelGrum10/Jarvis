@@ -6,7 +6,7 @@ const CACHE = 'jarvis-shell-v20';
 // unversioned entry here would warm the cache with a URL nothing asks for.
 const V = '20';
 const SHELL = [
-  '/', `/static/app.js?v=${V}`, `/static/voice.js?v=${V}`, `/static/hud.js?v=${V}`, `/static/galaxy.js?v=${V}`, `/static/reactor.js?v=${V}`,
+  '/', `/static/app.js?v=${V}`, `/static/voice.js?v=${V}`, `/static/hud.js?v=${V}`, `/static/galaxy.js?v=${V}`, `/static/reactor.js?v=${V}`, `/static/panels.js?v=${V}`,
   `/static/style.css?v=${V}`, `/static/hud.css?v=${V}`, '/manifest.webmanifest',
 ];
 

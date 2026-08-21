@@ -78,6 +78,9 @@ let spin = 0;
 let level = 0;                   // smoothed 0..1, what the core actually draws
 let target = 0;                  // where the current source says it should be
 
+let hostEl = null;               // what the canvas is currently parented to
+let opts = { scale: 0.42, outerRing: true };
+
 let audio = null;                // AudioContext, created on a gesture
 let analyser = null;
 let bins = null;
@@ -224,15 +227,35 @@ export function toggleReactor(force) {
   return hidden;
 }
 
-export function initReactor(host) {
-  if (canvas) return canvas;
-  canvas = document.createElement('canvas');
-  canvas.id = CANVAS_ID;
-  canvas.className = 'reactor';
-  // Decoration, not furniture: it must never intercept a tap meant for a star.
-  canvas.setAttribute('aria-hidden', 'true');
-  host.appendChild(canvas);
+/** Mount the reactor into a host element.
+ *
+ * One canvas, moved between hosts rather than one per screen: it carries live
+ * state (the envelope mid-sentence, the degrade decision, the hidden setting),
+ * and a second instance would either duplicate that or quietly disagree with it.
+ * Calling this again with a different host re-parents it.
+ *
+ *   scale      how much of the host's short side to fill
+ *   outerRing  false where the host already draws its own outer ring
+ */
+export function initReactor(host, options = {}) {
+  opts = { scale: 0.42, outerRing: true, ...options };
+  if (!canvas) {
+    canvas = document.createElement('canvas');
+    canvas.id = CANVAS_ID;
+    canvas.className = 'reactor';
+    // Decoration, not furniture: it must never intercept a tap meant for a star
+    // or for the ring underneath it.
+    canvas.setAttribute('aria-hidden', 'true');
+  }
+  if (canvas.parentElement !== host) host.appendChild(canvas);
+  hostEl = host;
   ctx = canvas.getContext('2d');
+  if (initReactor.armed) {          // listeners and storage, once per session
+    resize();
+    if (!hidden) start();
+    return canvas;
+  }
+  initReactor.armed = true;
 
   try {
     hidden = localStorage.getItem(HIDDEN_KEY) === '1';
@@ -307,7 +330,12 @@ function tick(now) {
 function resize() {
   if (!canvas) return;
   const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
-  const size = Math.min(window.innerWidth, window.innerHeight) * 0.42;
+  // Sized from the host, not the window: the same canvas fills a 340px HUD
+  // stage and a full-screen galaxy, and asking the window would make it the
+  // wrong size in one of them.
+  const box = hostEl?.getBoundingClientRect();
+  const short = Math.min(box?.width || window.innerWidth, box?.height || window.innerHeight);
+  const size = short * (opts.scale || 0.42);
   canvas.style.width = `${size}px`;
   canvas.style.height = `${size}px`;
   canvas.width = Math.round(size * dpr);
@@ -354,24 +382,28 @@ function draw(now) {
     return;
   }
 
-  // Outer ring: constant slow rotation, with a gap so the motion reads.
-  ctx.save();
-  ctx.rotate(spin);
-  ctx.strokeStyle = rgba(colours.ring, 0.55);
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(0, 0, outer, 0.22, Math.PI * 2 - 0.22);
-  ctx.stroke();
-  // Ticks, so rotation is visible on a ring that is otherwise a circle.
-  ctx.strokeStyle = rgba(colours.ring, 0.8);
-  for (let i = 0; i < 12; i += 1) {
-    const angle = (i / 12) * Math.PI * 2;
+  // Outer ring: constant slow rotation, with a gap so the motion reads. Skipped
+  // where the host already draws one — in the HUD the SVG rings are the outer
+  // layer, and a second set on top of them just looks like a mistake.
+  if (opts.outerRing) {
+    ctx.save();
+    ctx.rotate(spin);
+    ctx.strokeStyle = rgba(colours.ring, 0.55);
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(Math.cos(angle) * (outer - 8), Math.sin(angle) * (outer - 8));
-    ctx.lineTo(Math.cos(angle) * (outer - 2), Math.sin(angle) * (outer - 2));
+    ctx.arc(0, 0, outer, 0.22, Math.PI * 2 - 0.22);
     ctx.stroke();
+    // Ticks, so rotation is visible on a ring that is otherwise a circle.
+    ctx.strokeStyle = rgba(colours.ring, 0.8);
+    for (let i = 0; i < 12; i += 1) {
+      const angle = (i / 12) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(angle) * (outer - 8), Math.sin(angle) * (outer - 8));
+      ctx.lineTo(Math.cos(angle) * (outer - 2), Math.sin(angle) * (outer - 2));
+      ctx.stroke();
+    }
+    ctx.restore();
   }
-  ctx.restore();
 
   // Middle ring, counter-rotating. In thinking state the two speeds are what
   // says "working" without any text.

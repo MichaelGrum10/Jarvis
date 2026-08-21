@@ -162,10 +162,36 @@ which does upload the recording. That path never runs on Safari or Chrome, both
 of which have the native API. If you want it gone absolutely, delete
 `_startWhisper` and the `voice` router.
 
+## One screen
+
+There is no voice mode and no text mode any more — just the HUD, with a type bar
+under the ring. **The reply comes back the way the question went in:** typed
+questions are answered in writing, in a transcript panel that stays hidden until
+there is something in it; spoken ones are answered out loud. Reading a reply you
+are simultaneously being told is noise, and being talked at after typing is
+worse.
+
+The microphone button on the type bar is dictation only — it fills the box and
+leaves the sending to you. Talking to the ring is the spoken path, and that one
+records real audio for speaker verification.
+
+## Moving the panels
+
+Drag a panel by its heading. It leaves the layout and stays where you put it, on
+that device. **Reset panel layout** in the menu puts everything back.
+
+Panels are clamped inside the viewport on drop and again on every resize — a
+layout saved on a laptop and reopened on a phone would otherwise leave panels
+off the right-hand edge with no way to reach them except clearing site data.
+Dragging works from the heading only: the bodies scroll, and a drag that starts
+on content eats every attempt to scroll the inbox.
+
 ## The arc reactor
 
-The circular HUD in the middle of the galaxy pulses with Jarvis's voice. The
-toggle is the ◎ button in the galaxy's top bar; the choice is remembered.
+The circular element that pulses with Jarvis's voice. It sits inside the HUD's
+ring, and moves into the galaxy while the galaxy is open — one canvas, re-parented,
+rather than two that could disagree about what is happening. The ◎ button in the
+galaxy's top bar hides it; the choice is remembered.
 
 ### Where the pulse comes from
 

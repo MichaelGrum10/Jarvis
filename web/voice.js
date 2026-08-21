@@ -404,13 +404,3 @@ export const isMobile = () =>
  * Phones default to text, desktops default to voice — but the choice is yours on
  * either, and once you pick, that sticks.
  */
-export function defaultMode() {
-  const saved = localStorage.getItem('jarvis_mode');
-  if (saved === 'text' || saved === 'voice') return saved;
-  if (!voiceSupport.any) return 'text';
-  return isMobile() ? 'text' : 'voice';
-}
-
-export function saveMode(mode) {
-  localStorage.setItem('jarvis_mode', mode);
-}

@@ -277,3 +277,90 @@
 
 .hud-age { font-size: 10px; color: #f5b642; margin-left: auto; }
 .hud-empty { font-size: 12px; color: rgba(150, 180, 205, 0.6); }
+
+/* ---------- one screen: the type bar and the transcript ----------
+   There is no mode switch any more. Talking and typing are the same screen,
+   and the reply comes back the way the question went in. */
+
+.hud .composer {
+  width: min(100%, 620px);
+  flex: none;
+  background: rgba(9, 16, 24, 0.72);
+  border: 1px solid rgba(79, 214, 247, 0.22);
+  border-radius: 999px;
+  padding: 6px 6px 6px 10px;
+  backdrop-filter: blur(10px);
+  align-items: center;
+}
+.hud .composer textarea {
+  background: transparent;
+  border: none;
+  padding: 9px 6px;
+  color: var(--text);
+}
+.hud .composer textarea::placeholder {
+  color: rgba(79, 214, 247, 0.45);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+}
+.hud .composer textarea:focus { border: none; outline: none; }
+.hud .composer .icon-btn.mic { background: transparent; border: none; color: rgba(79, 214, 247, .8); }
+.hud .composer .icon-btn.mic.active { color: var(--accent); }
+
+/* The transcript is a panel like the others — draggable, and out of the way
+   when it is not wanted. Capped in height so a long answer scrolls inside it
+   rather than pushing the reactor off the screen. */
+.hud-panel.transcript .panel-body { max-height: min(46vh, 420px); overflow-y: auto; }
+.hud-panel.transcript .messages { padding: 0; overflow: visible; }
+.hud-panel.transcript .msg { margin-bottom: 10px; }
+.hud-panel.transcript .bubble { max-width: 100%; font-size: 13px; padding: 8px 11px; }
+
+.panel-x {
+  float: right;
+  background: none; border: none; cursor: pointer;
+  color: rgba(79, 214, 247, 0.5);
+  font-size: 12px; line-height: 1; padding: 0 2px;
+}
+.panel-x:hover { color: rgba(79, 214, 247, 0.95); }
+
+/* ---------- modular panels ----------
+   Drag a panel by its heading and it leaves the grid and stays put. */
+
+.hud-panel h3.drag-handle {
+  cursor: grab;
+  /* Without this the browser claims the gesture for scrolling on a phone and
+     the panel never moves at all. */
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.hud-panel h3.drag-handle:active { cursor: grabbing; }
+
+.hud-panel.moved {
+  position: fixed;
+  margin: 0;
+  z-index: 64;
+  width: min(320px, 78vw);
+}
+.hud-panel.dragging {
+  /* Lifted, and never animated: a transition on left/top makes the panel lag
+     behind the finger, which reads as the drag being broken. */
+  transition: none;
+  border-color: rgba(79, 214, 247, 0.55);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.55);
+  opacity: 0.96;
+}
+
+.hud-suggestions {
+  display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  max-width: min(100%, 620px);
+}
+.hud-suggestions .chip {
+  background: rgba(79, 214, 247, 0.06);
+  border: 1px solid rgba(79, 214, 247, 0.22);
+  color: rgba(203, 233, 245, 0.85);
+  font-size: 12.5px;
+  padding: 7px 13px;
+}
+.hud-suggestions .chip:active { background: rgba(79, 214, 247, 0.16); }

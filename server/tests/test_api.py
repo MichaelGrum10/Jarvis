@@ -204,6 +204,38 @@ def test_every_imported_binding_actually_exists():
                 )
 
 
+def test_every_element_the_scripts_reach_for_exists():
+    """`$('gone').classList` throws, and takes the rest of the module with it.
+
+    Deleting an element from index.html and missing one caller is the exact
+    shape of that mistake, and it is invisible until the page is open. Ids the
+    scripts build themselves (modal bodies, the skills editor) are found by
+    scanning the JS for the markup it writes, so they need no allowlist to
+    maintain.
+    """
+    import re
+    from pathlib import Path
+
+    web = Path(__file__).resolve().parents[2] / "web"
+    html = (web / "index.html").read_text()
+    available = set(re.findall(r'id="([\w-]+)"', html))
+
+    scripts = {p.name: p.read_text() for p in web.glob("*.js")}
+    for source in scripts.values():
+        # Anything the script itself renders counts as existing.
+        available |= set(re.findall(r'id="([\w-]+)"', source))
+        available |= set(re.findall(r"\.id\s*=\s*['\"]([\w-]+)['\"]", source))
+
+    missing = []
+    for name, source in scripts.items():
+        for pattern in (r"\$\('([\w-]+)'\)", r"getElementById\('([\w-]+)'\)"):
+            for element in re.findall(pattern, source):
+                if element not in available:
+                    missing.append(f"{name} reaches for #{element}, which nothing creates")
+
+    assert not missing, "\n".join(sorted(set(missing)))
+
+
 def test_the_service_worker_caches_the_versions_the_page_asks_for():
     """A stale shell is the worst kind of bug here: the modules import each
     other, so a service worker holding one at v19 while the page requests v20

@@ -35,7 +35,6 @@
       <span>Jarvis</span>
     </div>
     <div class="topbar-actions">
-      <button id="mode-btn" class="icon-btn" aria-label="Switch between voice and text" title="Switch mode">⌨</button>
       <button id="loc-btn" class="icon-btn" aria-label="Share location" title="Share location">◎</button>
       <button id="new-btn" class="icon-btn" aria-label="New conversation">＋</button>
     </div>
@@ -48,8 +47,8 @@
     </div>
     <div id="conv-list" class="conv-list"></div>
     <div class="drawer-foot">
-      <button id="hud-btn" class="ghost-btn">◎ Open HUD (voice)</button>
       <button id="galaxy-btn" class="ghost-btn">✧ Knowledge galaxy</button>
+      <button id="layout-btn" class="ghost-btn">▦ Reset panel layout</button>
       <button id="skills-btn" class="ghost-btn">✦ Skills</button>
       <button id="cookies-btn" class="ghost-btn">🍪 Browser session</button>
       <button id="voice-btn" class="ghost-btn">🔊 Voice</button>
@@ -60,22 +59,7 @@
   </aside>
   <div id="scrim" class="scrim"></div>
 
-  <main id="messages" class="messages">
-    <div class="welcome">
-      <div class="logo big">J</div>
-      <h2>Good to see you.</h2>
-      <div class="suggestions">
-        <button class="chip">What's on my calendar today?</button>
-        <button class="chip">Anything important in my inbox?</button>
-        <button class="chip">WSJ markets headlines</button>
-        <button class="chip">How's NVDA doing?</button>
-        <button class="chip">I need a haircut</button>
-        <button class="chip">Any messages I should reply to?</button>
-      </div>
-    </div>
-  </main>
-
-  <div id="hud" class="hud hidden" data-state="idle">
+  <div id="hud" class="hud" data-state="idle">
     <div id="hud-alert" class="hud-alert hidden"></div>
 
     <div id="hud-stage" class="hud-stage" role="button" tabindex="0"
@@ -116,33 +100,43 @@
         <h3>Briefing <span class="dot-status" data-for="calendar"></span></h3>
         <div class="panel-body"></div>
       </section>
+
+      <!-- The written side of the conversation. A panel like the others, so it
+           can be dragged out of the way, and hidden until there is something in
+           it — an empty transcript box in the middle of the HUD is clutter. -->
+      <section class="hud-panel transcript hidden" id="panel-transcript">
+        <h3>Transcript
+          <button id="transcript-clear" class="panel-x" aria-label="Clear">✕</button>
+        </h3>
+        <div class="panel-body">
+          <main id="messages" class="messages"></main>
+        </div>
+      </section>
+    </div>
+
+    <!-- Type or talk, same screen. A typed question is answered in writing; a
+         spoken one is answered out loud. -->
+    <form id="composer" class="composer">
+      <button id="mic-btn" type="button" class="icon-btn mic" aria-label="Dictate">🎙</button>
+      <textarea id="input" rows="1" placeholder="Ask Jarvis…" autocomplete="off"></textarea>
+      <button id="send" type="submit" aria-label="Send">↑</button>
+    </form>
+
+    <!-- Something to ask, for a screen that otherwise starts empty. Goes away
+         after the first question and does not come back. -->
+    <div id="hud-suggestions" class="hud-suggestions">
+      <button class="chip">What's on my calendar today?</button>
+      <button class="chip">Anything important in my inbox?</button>
+      <button class="chip">How's NVDA doing?</button>
+      <button class="chip">I need a haircut</button>
     </div>
 
     <div class="hud-actions">
       <button id="hud-enroll" class="hud-btn">Enrol voice</button>
       <button id="hud-galaxy" class="hud-btn">Galaxy</button>
-      <button id="hud-exit" class="hud-btn">Text mode</button>
+      <button id="voice-stop" class="hud-btn hidden">■ Stop speaking</button>
     </div>
   </div>
-
-  <div id="voice-panel" class="voice-panel hidden">
-    <div id="voice-transcript" class="voice-transcript"></div>
-    <button id="voice-orb" class="voice-orb" aria-label="Hold to speak">
-      <span class="orb-ring"></span>
-      <span class="orb-icon">🎙</span>
-    </button>
-    <div id="voice-hint" class="voice-hint">Tap to speak</div>
-    <div class="voice-actions">
-      <button id="voice-stop" class="ghost-btn hidden">■ Stop speaking</button>
-      <button id="voice-to-text" class="ghost-btn">⌨ Type instead</button>
-    </div>
-  </div>
-
-  <form id="composer" class="composer">
-    <button id="mic-btn" type="button" class="icon-btn mic" aria-label="Dictate">🎙</button>
-    <textarea id="input" rows="1" placeholder="Ask Jarvis…" autocomplete="off"></textarea>
-    <button id="send" type="submit" aria-label="Send">↑</button>
-  </form>
 </div>
 
 <!-- The galaxy sits above everything: it is a place you go, not a panel you

@@ -8,10 +8,11 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=20';
+import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=20';
 import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=20';
 import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=20';
-import { reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
+import { initPanels, resetLayout } from '/static/panels.js?v=20';
+import { initReactor, reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
   from '/static/reactor.js?v=20';
 
 const API = '';
@@ -27,9 +28,10 @@ let location_ = null;
 let sending = false;
 let commandTimer = null;
 
-/* Phones start in text mode, desktops start in voice mode, and the mode button
- * switches either way — the choice persists per device. */
-let mode = defaultMode();
+// Which way the last question arrived. A typed question is answered in
+// writing and a spoken one out loud — reading a reply you are simultaneously
+// being told is noise, and being talked at after typing is worse.
+let askedByVoice = false;
 let listener = null;
 const speaker = new Speaker();
 const jarvis = new JarvisVoice();
@@ -108,9 +110,7 @@ async function enterApp() {
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   $('status-dot').classList.add('on');
-  if (!voiceSupport.any && mode === 'voice') mode = 'text';
-  refreshIdentity().then(applyMode);
-  $('voice-hint').textContent = tapHint();
+  refreshIdentity().then(startHud);
   loadConversations();
   requestLocation();
   commandTimer = setInterval(pollCommands, 4000);
@@ -254,12 +254,16 @@ function runCommand(cmd) {
 /* ---------------- chat ---------------- */
 
 function clearWelcome() {
-  const w = document.querySelector('.welcome');
-  if (w) w.remove();
+  // The prompts have done their job the moment anything is asked, by any route.
+  $('hud-suggestions')?.classList.add('hidden');
 }
 
 function addMessage(role, text) {
   clearWelcome();
+  // The transcript panel is hidden until it has something in it — an empty box
+  // in the middle of the HUD is clutter, and this is the only place that can
+  // know it stopped being empty.
+  $('panel-transcript').classList.remove('hidden');
   const wrap = el('div', `msg ${role}`);
   const bubble = el('div', 'bubble');
   bubble.innerHTML = role === 'assistant' ? renderMarkdown(text) : esc(text);
@@ -284,8 +288,9 @@ function scrollDown() {
   m.scrollTop = m.scrollHeight;
 }
 
-async function send(text) {
+async function send(text, { byVoice = false } = {}) {
   if (sending || !text.trim()) return;
+  askedByVoice = byVoice;
   sending = true;
   $('send').disabled = true;
   $('status-dot').className = 'dot busy';
@@ -372,7 +377,7 @@ async function send(text) {
   }
     const reply = finalText || 'No response.';
     addMessage('assistant', reply);
-    if (mode === 'voice') speakReply(reply);
+    if (askedByVoice) speakReply(reply);
     loadConversations();
   } catch (err) {
     typing.remove();
@@ -652,46 +657,23 @@ async function loadRuns() {
 
 let stopHudPanels = null;
 
-function applyMode() {
-  const voice = mode === 'voice';
-  // Panels poll on a timer, so they run only while the HUD is on screen. Left
-  // running in text mode they would keep hitting iCloud and Yahoo for a display
-  // nobody is looking at.
-  if (voice && !stopHudPanels) {
-    stopHudPanels = startHudPanels(api);
-  } else if (!voice && stopHudPanels) {
-    stopHudPanels();
-    stopHudPanels = null;
-  }
-  // In voice mode the HUD takes the whole screen: no transcript, no composer,
-  // no message list. You already know what you said, and reading a reply you are
-  // simultaneously being told is just noise.
-  $('hud').classList.toggle('hidden', !voice);
-  $('messages').classList.toggle('hidden', voice);
-  $('composer').classList.toggle('hidden', voice);
-  $('voice-panel').classList.add('hidden');   // superseded by the HUD
-  $('mode-btn').textContent = voice ? '⌨' : '🎙';
-  $('mode-btn').title = voice ? 'Switch to typing' : 'Switch to voice';
-  // Dictation stays available in text mode — it just doesn't take over the screen.
-  // Gated on the secure context too: over plain HTTP getUserMedia never resolves,
-  // so the button would look functional and do nothing at all.
+/** Bring the HUD up. There is one screen now, so this runs once.
+ *
+ * The panels poll on their own timers, so they are started here rather than at
+ * import: nothing should be hitting iCloud and Yahoo before there is a signed-in
+ * device to show them to.
+ */
+function startHud() {
+  if (!stopHudPanels) stopHudPanels = startHudPanels(api);
+  initPanels();
+  // The reactor lives in the middle of the ring. The HUD's SVG already draws
+  // the outer ring, so the canvas contributes the inner arcs and the core.
+  initReactor($('hud-stage'), { scale: 0.86, outerRing: false });
+  // Dictation is gated on a secure context: over plain HTTP getUserMedia never
+  // resolves, so the button would look functional and do nothing at all.
   $('mic-btn').classList.toggle('hidden', !voiceUsable());
-
-  if (voice) {
-    startWakeWord();
-    setHudState('idle', identityState.enrolled ? 'Say "Jarvis", or tap' : 'Tap to speak');
-  } else {
-    stopWakeWord();
-    stopListening();
-    jarvis.cancel();
-    speaker.cancel();
-  }
-}
-
-function setMode(next) {
-  mode = next;
-  saveMode(next);
-  applyMode();
+  startWakeWord();
+  setHudState('idle', identityState.enrolled ? 'Say "Jarvis", or tap' : 'Tap to speak');
 }
 
 /* ---------------- HUD state ----------------
@@ -738,14 +720,14 @@ function hudAlert(message) {
 }
 
 function speakReply(text) {
-  if (mode === 'voice') {
+  {
     speakWithReactor(text, {
       onStart: () => setHudState('speaking', 'Speaking'),
       onEnd: () => {
         setHudState('idle', identityState.enrolled ? 'Say "Jarvis", or tap' : 'Tap to speak');
         // Hand the mic straight back so a conversation can continue without
         // reaching for the phone between turns.
-        if (mode === 'voice') startWakeWord();
+        startWakeWord();
       },
     });
     return;
@@ -754,38 +736,27 @@ function speakReply(text) {
   speaker.speak(text, { onEnd: () => $('voice-stop').classList.add('hidden') });
 }
 
-function makeListener({ intoComposer }) {
+function makeListener() {
+  // Dictation into the type bar, and nothing else — the spoken-turn path goes
+  // through runVoiceTurn, which records real audio for speaker verification.
   return new Listener({
     onStart: () => {
-      $('voice-orb').classList.add('listening');
-      $('voice-hint').textContent = 'Listening… tap to stop';
       $('mic-btn').classList.add('active');
+      setHudState('listening', 'Dictating');
     },
-    onInterim: (text) => {
-      if (intoComposer) {
-        $('input').value = text;
-      } else {
-        $('voice-transcript').textContent = text;
-      }
-    },
+    onInterim: (text) => { $('input').value = text; },
     onFinal: (text) => {
       if (!text.trim()) return;
-      if (intoComposer) {
-        $('input').value = text;
-        $('input').focus();
-      } else {
-        $('voice-transcript').textContent = '';
-        send(text);
-      }
+      $('input').value = text;
+      $('input').focus();
     },
     onError: (message) => {
-      $('voice-hint').textContent = message;
-      setTimeout(() => { $('voice-hint').textContent = tapHint(); }, 4000);
+      setHudState('idle', message);
+      setTimeout(() => setHudState('idle', tapHint()), 4000);
     },
     onStop: () => {
-      $('voice-orb').classList.remove('listening');
       $('mic-btn').classList.remove('active');
-      $('voice-hint').textContent = tapHint();
+      setHudState('idle', tapHint());
     },
   });
 }
@@ -795,21 +766,25 @@ function tapHint() {
   return listener?.mode === 'whisper' ? 'Tap to record, tap again to send' : 'Tap to speak';
 }
 
-function startListening({ intoComposer = false } = {}) {
+function startListening() {
   // Barge-in: if Jarvis is mid-sentence, talking over it should cut it off.
+  jarvis.cancel();
   speaker.cancel();
   $('voice-stop').classList.add('hidden');
-  listener = makeListener({ intoComposer });
-  listener.start({ continuous: !intoComposer && !isMobile() });
+  listener = makeListener();
+  // Never continuous for dictation: it is filling a text box that the person
+  // is watching, and a recogniser that keeps going appends a second sentence
+  // over the one they were about to send.
+  listener.start({ continuous: false });
 }
 
 function stopListening() {
   listener?.stop();
 }
 
-function toggleListening(options) {
+function toggleListening() {
   if (listener?.active) stopListening();
-  else startListening(options);
+  else startListening();
 }
 
 /* ---------------- HUD voice turn ---------------- */
@@ -861,7 +836,7 @@ async function refreshIdentity() {
 }
 
 function startWakeWord() {
-  if (mode !== 'voice' || hudBusy) return;
+  if (hudBusy) return;
   buildTicks();
   if (!wake) {
     wake = new WakeListener(
@@ -932,13 +907,13 @@ async function runVoiceTurn() {
     }
 
     setHudState('thinking', 'Working');
-    await send(data.text);   // send() drives speakReply() on completion
+    await send(data.text, { byVoice: true });   // send() drives speakReply() on completion
   } catch (err) {
     setHudState('idle', 'Something went wrong');
     hudAlert(err.message);
   } finally {
     hudBusy = false;
-    if (mode === 'voice' && !jarvis.speaking) startWakeWord();
+    if (!jarvis.speaking) startWakeWord();
   }
 }
 
@@ -1018,7 +993,7 @@ async function enrolVoice() {
     body().innerHTML = `<p class="error">${esc(err.message)}</p>`;
   } finally {
     hudBusy = false;
-    if (mode === 'voice') startWakeWord();
+    startWakeWord();
   }
 }
 
@@ -1255,15 +1230,21 @@ $('login-btn').onclick = signIn;
 $('password').onkeydown = (e) => { if (e.key === 'Enter') signIn(); };
 $('label').onkeydown = (e) => { if (e.key === 'Enter') signIn(); };
 
-$('mode-btn').onclick = () => setMode(mode === 'voice' ? 'text' : 'voice');
 $('hud-stage').onclick = () => { if (jarvis.speaking) { jarvis.cancel(); } runVoiceTurn(); };
 $('hud-stage').onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); runVoiceTurn(); } };
 $('hud-enroll').onclick = enrolVoice;
-$('hud-exit').onclick = () => setMode('text');
-$('voice-orb').onclick = () => toggleListening();
-$('voice-to-text').onclick = () => setMode('text');
-$('voice-stop').onclick = () => { speaker.cancel(); $('voice-stop').classList.add('hidden'); };
-$('mic-btn').onclick = () => toggleListening({ intoComposer: true });
+$('voice-stop').onclick = () => {
+  jarvis.cancel();
+  speaker.cancel();
+  reactorSilent();
+  reactorState('idle');
+  $('voice-stop').classList.add('hidden');
+};
+$('transcript-clear').onclick = () => {
+  $('messages').replaceChildren();
+  $('panel-transcript').classList.add('hidden');
+};
+$('mic-btn').onclick = () => toggleListening();
 
 $('menu-btn').onclick = openDrawer;
 $('drawer-close').onclick = closeDrawer;
@@ -1276,16 +1257,25 @@ $('auto-btn').onclick = showAutonomy;
 $('skills-btn').onclick = showSkills;
 $('cookies-btn').onclick = showBrowserSession;
 $('voice-btn').onclick = showVoicePicker;
-$('hud-btn').onclick = () => { closeDrawer(); setMode('voice'); };
+$('layout-btn').onclick = () => { resetLayout(); closeDrawer(); };
 initGalaxy({
   api,
   // The galaxy speaks its answers but never the note it opens: the note is on
   // screen to be read. jarvis.speak already respects the voice on/off setting
   // and the chosen voice, so routing through it keeps one place in charge.
-  speak: (text) => { if (mode === 'voice' || jarvis.enabled) speakWithReactor(text); },
+  speak: (text) => { if (jarvis.enabled) speakWithReactor(text); },
+  // One reactor, moved between screens rather than two that could disagree
+  // about what is happening. It goes back to the HUD when the galaxy closes.
+  onClose: () => initReactor($('hud-stage'), { scale: 0.86, outerRing: false }),
 });
-$('galaxy-btn').onclick = () => { closeDrawer(); openGalaxy(); };
-$('hud-galaxy').onclick = () => openGalaxy();
+
+async function toGalaxy() {
+  closeDrawer();
+  await openGalaxy();
+  initReactor($('galaxy'), { scale: 0.42, outerRing: true });
+}
+$('galaxy-btn').onclick = toGalaxy;
+$('hud-galaxy').onclick = toGalaxy;
 $('modal-close').onclick = () => $('modal').classList.add('hidden');
 $('modal').onclick = (e) => { if (e.target === $('modal')) $('modal').classList.add('hidden'); };
 
@@ -1354,10 +1344,10 @@ function checkSecureContext() {
  * it looks broken rather than absent. */
 function hideDeadVoiceControls() {
   if (voiceUsable()) return;
-  // setMode first: applyMode owns the mic button's visibility, so hiding it
-  // here and then switching modes would simply un-hide it again.
-  setMode('text');
-  for (const id of ['voice-orb', 'mode-btn']) $(id)?.classList.add('hidden');
+  // The type bar is the whole interface in that case, which is why it is
+  // always present rather than something you switch to.
+  for (const id of ['hud-enroll', 'voice-stop']) $(id)?.classList.add('hidden');
+  $('hud-status').textContent = 'Type to Jarvis';
 }
 
 /* Requirement 2. The greeting cannot play on load, because nothing has been

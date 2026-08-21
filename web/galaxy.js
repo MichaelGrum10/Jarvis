@@ -19,7 +19,7 @@
  * and is unreachable from a phone without an SSH tunnel.
  */
 
-import { initReactor, reactorHidden, toggleReactor } from '/static/reactor.js?v=20';
+import { reactorHidden, toggleReactor } from '/static/reactor.js?v=20';
 
 const LIB = '/static/vendor/3d-force-graph.min.js?v=20';
 
@@ -610,9 +610,6 @@ export async function openGalaxy(ids) {
   }
 
   if (!graph) {
-    // The reactor lives inside the galaxy, so it is created the first time the
-    // galaxy is — no canvas and no animation loop exist until then.
-    initReactor($('galaxy'));
     const toggle = $('reactor-toggle');
     const label = () => {
       const off = reactorHidden();
@@ -677,6 +674,9 @@ export function closeGalaxy() {
   stopStars();
   // A WebGL scene left rendering behind a hidden div is pure battery drain.
   if (graph) graph.pauseAnimation();
+  // The reactor was borrowed from the HUD while this was open. Whoever lent it
+  // decides where it goes back to; this module does not know the HUD exists.
+  deps.onClose?.();
 }
 
 export function galaxyIsOpen() {
