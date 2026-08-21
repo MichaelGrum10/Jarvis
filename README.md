@@ -397,11 +397,25 @@ A running log of choices that are easy to forget and expensive to rediscover.
 Each one records what was chosen *and what it rules out*, because the second
 half is what saves you the next time it looks wrong.
 
-**Host — Oracle Cloud, Ubuntu 24.04.** Architecture is whatever `uname -m`
-reports on the instance: `aarch64` on the Ampere shapes, `x86_64` otherwise.
-It matters for Docker image tags, any downloaded binary, and Chromium. Confirm
-it before assuming — a shell on your laptop or in a build container will
-happily report the wrong one.
+**Host — Oracle Cloud Ampere, `aarch64`, Ubuntu 24.04.4 LTS, Python 3.12.3.**
+Measured on the instance, not assumed. The architecture matters for Docker
+image tags, any downloaded binary, and Chromium; confirm it with `uname -m` on
+the box itself, because a shell on your laptop or in a build container will
+happily report `x86_64` instead.
+
+**Docker-published ports bypass the INPUT chain.** Docker installs DNAT in
+`nat/PREROUTING` and filters in `FORWARD`/`DOCKER`, so INPUT rules for 80, 443
+and 8000 are not what makes the site reachable — the published bind address is.
+This cuts both ways: adding an INPUT rule will not open a container port, and
+deleting one will not close it. `127.0.0.1:8000:8000` in `docker-compose.yml`
+is what keeps the app off the public interface, and it is the line to check
+first when reasoning about exposure.
+
+**Port 8000 is plaintext.** Caddy terminates TLS on 443 and proxies to
+`jarvis:8000` over Docker's internal network. Anything reaching 8000 directly
+carries the access password and device tokens unencrypted, which is why the
+compose binding is localhost-only and why an `ss -tlnp` showing `0.0.0.0:8000`
+would be a real finding rather than a tidiness issue.
 
 **Two firewalls, not one.** Instance `iptables` *and* the VCN Security List in
 the Oracle console. Both must pass, and both fail as a silent timeout. The
