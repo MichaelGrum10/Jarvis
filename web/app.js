@@ -8,9 +8,9 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=15';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=15';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=15';
+import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=16';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=16';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=16';
 
 const API = '';
 const store = {
@@ -1250,7 +1250,13 @@ $('skills-btn').onclick = showSkills;
 $('cookies-btn').onclick = showBrowserSession;
 $('voice-btn').onclick = showVoicePicker;
 $('hud-btn').onclick = () => { closeDrawer(); setMode('voice'); };
-initGalaxy({ api });
+initGalaxy({
+  api,
+  // The galaxy speaks its answers but never the note it opens: the note is on
+  // screen to be read. jarvis.speak already respects the voice on/off setting
+  // and the chosen voice, so routing through it keeps one place in charge.
+  speak: (text) => { if (mode === 'voice' || jarvis.enabled) jarvis.speak(text); },
+});
 $('galaxy-btn').onclick = () => { closeDrawer(); openGalaxy(); };
 $('hud-galaxy').onclick = () => openGalaxy();
 $('modal-close').onclick = () => $('modal').classList.add('hidden');

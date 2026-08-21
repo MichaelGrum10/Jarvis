@@ -19,7 +19,7 @@
  * and is unreachable from a phone without an SSH tunnel.
  */
 
-const LIB = '/static/vendor/3d-force-graph.min.js?v=15';
+const LIB = '/static/vendor/3d-force-graph.min.js?v=16';
 
 let graph = null;          // the ForceGraph3D instance
 let deps = { api: null };
@@ -32,11 +32,18 @@ let highlight = new Set();
 let pendingFly = null;     // ids to fly to once the layout has coordinates
 let fitted = false;        // whether the opening zoom-to-fit has happened
 let starTimer = null;
+
+/* Above this many sources, framing the constellation beats diving into one.
+   An answer synthesised from six notes is not "about" any single one of them,
+   and picking one to open would misrepresent where it came from. */
+const CLUSTER_AT = 4;
 let generation = '';   // which graph the browser is holding
 let session = '';      // per-tab, so follow-up questions have context
 
 function $(id) { return document.getElementById(id); }
 
+/* `speak` is injected rather than imported so this module never owns a voice:
+   app.js decides whether speech is on at all, and which voice it uses. */
 export function initGalaxy(options) { deps = options; }
 
 /* ---------------- lazy library load ---------------- */
@@ -377,13 +384,52 @@ async function askVault() {
       ? 'Your notes changed since this opened — the highlighted stars may be wrong. Reopen the galaxy.'
       : null;
     renderAnswer(res.answer, res.nodes, warning, false);
-    if (!res.stale && res.nodes && res.nodes.length) flyTo(res.nodes);
+
+    // The answer only, never the note. The note is on screen to be read —
+    // reading 700 characters of it aloud would bury the two sentences that
+    // actually answered the question.
+    deps.speak?.(res.answer);
+
+    if (!res.stale) showSources(res.nodes || []);
     input.value = '';
   } catch (err) {
     renderAnswer(err.message, null, null, true);
   } finally {
     send.disabled = false;
   }
+}
+
+
+/**
+ * Show where an answer came from.
+ *
+ * Two behaviours, because one does not fit both cases. With a handful of
+ * sources, diving to the strongest and opening it is the proof — you can read
+ * the sentence the answer came from. With many, a dive to any single note
+ * misrepresents an answer that was drawn across all of them, so the honest
+ * picture is the whole constellation lit at once.
+ */
+function showSources(ids) {
+  if (!ids.length || !graph) return;
+
+  if (ids.length >= CLUSTER_AT) {
+    selected = null;                 // no single note to open that wouldn't be arbitrary
+    highlight = new Set(ids);
+    repaint();
+    flyTo(ids, false);               // highlight is already set; don't let flyTo narrow it
+    return;
+  }
+
+  const top = byId.get(ids[0]);
+  if (!top) return;
+
+  // select() already does the whole job: camera, the node and its direct
+  // neighbours lit, and the side panel open on the note itself.
+  select(top);
+  // The other cited notes are sources too. Leaving them dimmed would contradict
+  // the source chips sitting directly above them in the answer card.
+  highlight = new Set([...highlight, ...ids]);
+  repaint();
 }
 
 /* ---------------- public API ---------------- */
