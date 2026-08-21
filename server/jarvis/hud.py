@@ -95,11 +95,33 @@ async def _calendar() -> dict:
     now = dt.datetime.now(ZoneInfo(settings.timezone))
     events, source = await read_events(now, now + dt.timedelta(days=2))
 
-    upcoming = [e.to_dict() for e in events if e.start >= now.isoformat()][:3]
-    soon = (now + dt.timedelta(hours=1)).isoformat()
-    for event in upcoming:
-        event["imminent"] = event["start"] <= soon
+    # Compared as instants, not as strings. "2026-08-21T20:00:00+00:00" and
+    # "2026-08-21T18:00:00-04:00" are the same moment and sort the wrong way
+    # round as text, so a string comparison hid events that had not happened
+    # yet and kept ones that had.
+    soon = now + dt.timedelta(hours=1)
+    upcoming = []
+    for event in events:
+        when = _when(event.start)
+        if when is None or when < now:
+            continue
+        row = event.to_dict()
+        row["imminent"] = when <= soon
+        upcoming.append(row)
+        if len(upcoming) == 3:
+            break
     return {"events": upcoming, "source": source}
+
+
+def _when(value: str) -> dt.datetime | None:
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+    # A naive value from an all-day event would explode against an aware `now`.
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo(get_settings().timezone))
+    return parsed
 
 
 async def _inbox() -> dict:

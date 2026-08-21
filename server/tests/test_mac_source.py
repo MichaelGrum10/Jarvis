@@ -329,3 +329,54 @@ def _async(value):
     async def run():
         return value
     return run()
+
+
+# ------------------------------------------------------- times, told correctly
+
+
+async def test_the_hud_compares_instants_not_strings(monkeypatch):
+    """Two valid timestamps with different offsets are the same moment and sort
+    the wrong way round as text."""
+    from jarvis import hud
+    from jarvis.integrations.apple_calendar import CalEvent
+
+    monkeypatch.setattr(get_settings(), "timezone", "America/New_York")
+    now = dt.datetime.now(dt.timezone.utc)
+
+    # Written with a +00:00 offset while "now" is Eastern: as strings the future
+    # event sorts *before* now and would be dropped.
+    soon = (now + dt.timedelta(minutes=30)).astimezone(dt.timezone.utc)
+    past = (now - dt.timedelta(hours=3)).astimezone(dt.timezone.utc)
+
+    async def events(start, end, calendar=""):
+        return [
+            CalEvent(uid="p", summary="Already happened", start=past.isoformat(),
+                     end=past.isoformat(), all_day=False),
+            CalEvent(uid="s", summary="Dinner", start=soon.isoformat(),
+                     end=soon.isoformat(), all_day=False),
+        ], "Mac"
+
+    monkeypatch.setattr("jarvis.integrations.mac_source.read_events", events)
+    panel = await hud._calendar()
+
+    assert [e["summary"] for e in panel["events"]] == ["Dinner"]
+    assert panel["events"][0]["imminent"] is True
+
+
+async def test_an_all_day_event_keeps_its_flag_through_the_hud(monkeypatch):
+    """The browser shows 'All day' rather than 00:00 — but only if the flag
+    survives the trip."""
+    from jarvis import hud
+    from jarvis.integrations.apple_calendar import CalEvent
+
+    monkeypatch.setattr(get_settings(), "timezone", "America/New_York")
+    tomorrow = dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=6)
+
+    async def events(start, end, calendar=""):
+        return [CalEvent(uid="f", summary="Feast", start=tomorrow.isoformat(),
+                         end=tomorrow.isoformat(), all_day=True)], "Mac"
+
+    monkeypatch.setattr("jarvis.integrations.mac_source.read_events", events)
+    panel = await hud._calendar()
+
+    assert panel["events"][0]["all_day"] is True

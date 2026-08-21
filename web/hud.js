@@ -384,8 +384,26 @@ function pct(value) {
   return `${value >= 0 ? '▲' : '▼'} ${Math.abs(rounded)}%`;
 }
 
-function row(left, right, cls = '') {
-  return `<div class="hud-row ${cls}"><span>${left}</span><span>${right}</span></div>`;
+function row(left, right, cls = '', title = '') {
+  const hint = title ? ` title="${esc(title)}"` : '';
+  return `<div class="hud-row ${cls}"${hint}><span>${left}</span><span>${right}</span></div>`;
+}
+
+/** An event's time, in the timezone of whoever is reading it.
+ *
+ * Not `iso.slice(11, 16)`, which was the previous version: that reads the
+ * characters where the hour happens to sit and throws the offset away, so an
+ * event stored as 20:00+00:00 reads as 8pm to someone for whom it is 4pm.
+ * Parsing and formatting is the only way the number matches the Calendar app
+ * it came from.
+ */
+function clock(iso, allDay) {
+  // Midnight to midnight is not "00:00" — that is a real time, and printing it
+  // for an all-day event states something false about the day.
+  if (allDay) return 'All day';
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return '';
+  return when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 /** Amber for stale, red for down — and stale keeps showing its last value.
@@ -429,17 +447,20 @@ function renderBriefing(data) {
     : '';
 
   const events = (data.calendar?.events || []).map((e) => row(
-    esc((e.start || '').slice(11, 16)),
+    esc(clock(e.start, e.all_day)),
     esc(e.summary || ''),
-    e.imminent ? 'imminent' : ''
+    e.imminent ? 'imminent' : '',
+    e.summary || ''
   )).join('') || '<div class="hud-empty">Nothing scheduled</div>';
 
+  // Titled as well as truncated: the row is one line so the panel stays a
+  // readable column, and the full subject is still there to be seen.
   const inbox = (data.inbox?.messages || []).map((m) => row(
-    esc(m.from), `<span class="sub">${esc(m.subject)}</span>`
+    esc(m.from), `<span class="sub">${esc(m.subject)}</span>`, '', `${m.from} — ${m.subject}`
   )).join('') || '<div class="hud-empty">Inbox clear</div>';
 
   const texts = (data.messages?.messages || []).map((m) => row(
-    esc(m.from), `<span class="sub">${esc(m.text)}</span>`
+    esc(m.from), `<span class="sub">${esc(m.text)}</span>`, '', `${m.from} — ${m.text}`
   )).join('');
 
   return `${quote}

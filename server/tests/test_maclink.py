@@ -568,3 +568,18 @@ async def test_a_wake_event_is_transcribed_answered_and_played(monkeypatch):
 
     link.resolve({"id": sent[0]["id"], "ok": True, "data": {"played": True}})
     await task
+
+
+def test_the_mac_stamps_events_with_its_own_clock():
+    """AppleScript sends wall-clock components with no offset. This runs on the
+    Mac, so `.astimezone()` attaches the Mac's zone — which is the right one,
+    and the reason the conversion belongs here rather than on the server."""
+    stamped = agent_mod._iso("2026,8,21,20,0")
+
+    assert stamped.startswith("2026-08-21T20:00:00")
+    assert stamped[-6] in "+-", f"no offset attached: {stamped}"
+
+
+def test_a_malformed_stamp_is_empty_rather_than_an_exception():
+    assert agent_mod._iso("nonsense") == ""
+    assert agent_mod._iso("") == ""

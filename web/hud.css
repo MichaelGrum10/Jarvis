@@ -297,11 +297,27 @@
 .dot-status.stale { background: #f5b642; }
 .dot-status.down { background: #ff5f56; }
 
+/* Two columns, one line each. As a flex row with both sides free to wrap, a
+   long sender and a long subject each broke onto a second line and every row
+   ended up a different height — the panel read as a list of paragraphs rather
+   than a column of entries. A fixed first column and truncation keeps the
+   right-hand edge straight; the full text is on the row's title. */
 .hud-row {
-  display: flex; justify-content: space-between; gap: 10px;
-  font-size: 13px; padding: 3px 0;
+  display: grid;
+  grid-template-columns: minmax(0, 7.5em) minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  font-size: 13px;
+  padding: 3px 0;
   color: rgba(220, 240, 255, 0.9);
 }
+.hud-row > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hud-row > span:last-child { text-align: right; }
 .hud-row .sub { color: rgba(160, 190, 215, 0.7); font-size: 12px; }
 .hud-row.imminent { color: #7fe3ff; font-weight: 600; }
 .up { color: #3ddc84; }
