@@ -1,12 +1,12 @@
 /* Service worker: makes Jarvis installable and keeps the shell available offline.
  * API calls are never cached — stale calendar data is worse than an error. */
 
-const CACHE = 'jarvis-shell-v19';
+const CACHE = 'jarvis-shell-v20';
 // Versioned to match the URLs index.html and app.js actually request. An
 // unversioned entry here would warm the cache with a URL nothing asks for.
-const V = '19';
+const V = '20';
 const SHELL = [
-  '/', `/static/app.js?v=${V}`, `/static/voice.js?v=${V}`, `/static/hud.js?v=${V}`, `/static/galaxy.js?v=${V}`,
+  '/', `/static/app.js?v=${V}`, `/static/voice.js?v=${V}`, `/static/hud.js?v=${V}`, `/static/galaxy.js?v=${V}`, `/static/reactor.js?v=${V}`,
   `/static/style.css?v=${V}`, `/static/hud.css?v=${V}`, '/manifest.webmanifest',
 ];
 

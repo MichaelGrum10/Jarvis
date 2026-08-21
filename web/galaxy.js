@@ -19,7 +19,9 @@
  * and is unreachable from a phone without an SSH tunnel.
  */
 
-const LIB = '/static/vendor/3d-force-graph.min.js?v=19';
+import { initReactor, reactorHidden, toggleReactor } from '/static/reactor.js?v=20';
+
+const LIB = '/static/vendor/3d-force-graph.min.js?v=20';
 
 let graph = null;          // the ForceGraph3D instance
 let deps = { api: null };
@@ -608,6 +610,19 @@ export async function openGalaxy(ids) {
   }
 
   if (!graph) {
+    // The reactor lives inside the galaxy, so it is created the first time the
+    // galaxy is — no canvas and no animation loop exist until then.
+    initReactor($('galaxy'));
+    const toggle = $('reactor-toggle');
+    const label = () => {
+      const off = reactorHidden();
+      toggle.setAttribute('aria-pressed', off ? 'true' : 'false');
+      toggle.title = off ? 'Show the arc reactor' : 'Hide the arc reactor';
+      toggle.classList.toggle('off', off);
+    };
+    toggle.onclick = () => { toggleReactor(); label(); };
+    label();
+
     $('ask-send').onclick = askVault;
     $('ask-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') { e.preventDefault(); askVault(); }

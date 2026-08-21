@@ -479,6 +479,16 @@ the same origin as everything else, so the galaxy works offline and no third
 party can change what the app runs. It replaced an earlier hand-rolled canvas
 renderer, which cost ~300 lines of projection maths to do worse.
 
+**The arc reactor's pulse is reconstructed, not measured — and only on the Web
+Speech path.** Synthesised speech cannot be routed into an `AnalyserNode` in any
+browser: the audio is the browser's, end to end, and there is no node to tap. So
+that path rebuilds an envelope from the utterance text, corrected by `boundary`
+events where they fire (rarely, on WebKit). Audio we control does go through a
+real analyser, and that path is built and tested — it just has nothing to drive
+it until a buffer-returning TTS exists. Anyone tempted to "fix" the envelope by
+finding the right analyser incantation should know the answer is that there
+isn't one.
+
 **Node ids are array positions.** `/api/notes/graph` numbers each node by its
 index, and search results are those numbers, so the viewer can fly the camera to
 a note without a second lookup. The cost is that any reindex renumbers

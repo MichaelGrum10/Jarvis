@@ -161,3 +161,61 @@ old iOS) fall back to `MediaRecorder` → `/api/voice/transcribe` → Groq Whisp
 which does upload the recording. That path never runs on Safari or Chrome, both
 of which have the native API. If you want it gone absolutely, delete
 `_startWhisper` and the `voice` router.
+
+## The arc reactor
+
+The circular HUD in the middle of the galaxy pulses with Jarvis's voice. The
+toggle is the ◎ button in the galaxy's top bar; the choice is remembered.
+
+### Where the pulse comes from
+
+Two sources, picked at runtime, because the browser will not hand over the same
+signal in both cases.
+
+**Audio we control** — a TTS service returning an mp3, or any `AudioNode` —
+goes through an `AnalyserNode`. `getByteFrequencyData` every frame, averaged
+over the bottom third of the spectrum because that is where speech lives:
+averaging the whole range buries the voice under empty highs and the core barely
+moves. This is real amplitude. `reactorAnalyse(source)` wires it.
+
+**Web Speech synthesis** cannot do this. The browser owns that audio from end to
+end and exposes no node to tap — there is no amplitude to read, at all, in any
+browser. So the envelope is reconstructed from the utterance: `boundary` events
+snap the position to where the engine actually is, and between them it advances
+through the real text, rising on vowel runs and dropping at punctuation.
+
+That last part is the difference between this and a timer. It is still a
+reconstruction, and worth being clear about — but it is a reconstruction of the
+sentence being spoken, so the pauses land where the speech pauses.
+
+**On WebKit, `boundary` frequently never fires at all.** The text-derived
+envelope is what carries it there, uncorrected. If the pulse looks slightly out
+of step with the voice on Safari, that is why, and it is not fixable from this
+side: the event and the audio are both withheld.
+
+### Frame budget
+
+Capped at 30fps, paused entirely when the tab is hidden, and drawn on one canvas
+rather than in DOM elements — the galaxy is already using the GPU.
+
+The cap has a 4ms tolerance, without which a display that is not 60Hz halves:
+frames arriving every 33.2ms would miss a 33.33ms gate every time and render at
+15. Measured at 29fps in a headless Chromium running rAF at 63Hz.
+
+If frame times stay below 20fps for 1.5 seconds it drops to a plain two-ring
+version with no gradients or blurs, and returns to the full one after five clean
+seconds. The asymmetry is deliberate — quick to protect the frame rate, slow to
+trust that the pressure is gone. **iOS Safari throttles `requestAnimationFrame`
+hard while audio is playing**, which is exactly when this element matters, so
+the trigger is measured frame time rather than a user-agent check.
+
+Slowness is measured in milliseconds, not in frames: counting frames means the
+slower the device, the longer it takes to notice it is slow.
+
+### What has not been tested
+
+Everything above was verified in headless Chromium, including the degrade path
+(forced with 22× CPU throttling) and the analyser path (fed a real oscillator —
+core radius 23px with tone, 19px in silence). **None of it has run on Safari,
+on either platform.** The `boundary` behaviour and the rAF throttling are both
+WebKit-specific, and both are unverified.

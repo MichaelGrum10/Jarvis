@@ -10,8 +10,8 @@
 <title>Jarvis</title>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
-<link rel="stylesheet" href="/static/style.css?v=19">
-<link rel="stylesheet" href="/static/hud.css?v=19">
+<link rel="stylesheet" href="/static/style.css?v=20">
+<link rel="stylesheet" href="/static/hud.css?v=20">
 </head>
 <body>
 
@@ -157,6 +157,8 @@
     <input id="galaxy-search" type="search" placeholder="Find a note by name…"
            autocomplete="off" autocapitalize="none">
     <button id="galaxy-reset" class="icon-btn" title="Show everything">⤢</button>
+    <button id="reactor-toggle" class="icon-btn" title="Hide the arc reactor"
+            aria-pressed="false">◎</button>
     <button id="galaxy-close" class="icon-btn" aria-label="Close galaxy">✕</button>
   </div>
   <div id="galaxy-status" class="galaxy-status hidden"></div>
@@ -262,6 +264,6 @@
   });
 })();
 </script>
-<script type="module" src="/static/app.js?v=19"></script>
+<script type="module" src="/static/app.js?v=20"></script>
 </body>
 </html>

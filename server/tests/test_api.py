@@ -167,24 +167,68 @@ def test_scripts_are_served_with_revalidation(client):
     assert "no-cache" in response.headers.get("cache-control", "")
 
 
-def test_the_hud_export_the_app_imports_actually_exists():
+def test_every_imported_binding_actually_exists():
     """The exact failure seen in the browser: "Importing binding name
-    'startHudPanels' is not found". Cheap to assert, and it fails at build time
-    rather than on someone's phone."""
+    'startHudPanels' is not found". Cheap to assert, and it fails here rather
+    than on someone's phone — `node --check` is syntax-only and cannot see it.
+
+    Checks every module rather than only app.js: the modules import each other,
+    and a missing binding kills the whole graph wherever it is.
+    """
     import re
     from pathlib import Path
 
     web = Path(__file__).resolve().parents[2] / "web"
-    app_js = (web / "app.js").read_text()
+    modules = sorted(p.name for p in web.glob("*.js"))
 
-    for match in re.finditer(r"import\s*\{([^}]+)\}\s*from\s*'/static/(\w+)\.js[^']*'", app_js):
-        names = [n.strip() for n in match.group(1).split(",") if n.strip()]
-        source = (web / f"{match.group(2)}.js").read_text()
-        for name in names:
-            pattern = rf"export\s+(async\s+)?(function|const|let|class)\s+{re.escape(name)}\b"
-            assert re.search(pattern, source), (
-                f"app.js imports {name} from {match.group(2)}.js, which does not export it"
-            )
+    for module in modules:
+        source_text = (web / module).read_text()
+        for match in re.finditer(
+            r"import\s*\{([^}]+)\}\s*from\s*['\"]/static/([\w.]+)\.js[^'\"]*['\"]", source_text
+        ):
+            target = web / f"{match.group(2)}.js"
+            assert target.is_file(), f"{module} imports from {target.name}, which does not exist"
+            exported = target.read_text()
+
+            for entry in match.group(1).split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                # `setState as reactorState` — the export is the name on the
+                # left. Checking the alias asserts against a name that by
+                # definition does not exist in the other file.
+                name = re.split(r"\s+as\s+", entry)[0].strip()
+                pattern = rf"export\s+(async\s+)?(function|const|let|class)\s+{re.escape(name)}\b"
+                assert re.search(pattern, exported), (
+                    f"{module} imports {name} from {target.name}, which does not export it"
+                )
+
+
+def test_the_service_worker_caches_the_versions_the_page_asks_for():
+    """A stale shell is the worst kind of bug here: the modules import each
+    other, so a service worker holding one at v19 while the page requests v20
+    produces a dead page that a reload cannot fix — the fix lives inside the
+    file that is stuck."""
+    import re
+    from pathlib import Path
+
+    web = Path(__file__).resolve().parents[2] / "web"
+    sw = (web / "sw.js").read_text()
+    version = re.search(r"const V = '(\d+)'", sw).group(1)
+
+    asked = set()
+    for name in ("index.html", "app.js", "galaxy.js", "hud.js"):
+        asked |= set(re.findall(r"/static/[\w./]+\?v=(\d+)", (web / name).read_text()))
+
+    assert asked, "no versioned asset URLs found — has the scheme changed?"
+    assert asked == {version}, (
+        f"sw.js caches v{version} but the app requests v{sorted(asked)}"
+    )
+
+    # Every module the page loads has to be in the shell, or an offline open
+    # fails on a static import with no error path to catch it.
+    for module in ("app.js", "voice.js", "hud.js", "galaxy.js", "reactor.js"):
+        assert f"/static/{module}?v=${{V}}" in sw, f"{module} is missing from the service worker shell"
 
 
 def test_the_entry_document_is_never_cached(client):

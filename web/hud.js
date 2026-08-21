@@ -16,7 +16,7 @@ const MAX_UTTERANCE_MS = 15000;
 const SILENCE_MS = 1400;
 
 import { getVoicesAsync, pickBritishVoice, unlockSpeech, IS_WEBKIT, primeSpeech }
-  from '/static/voice.js?v=19';
+  from '/static/voice.js?v=20';
 
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 
@@ -261,6 +261,10 @@ export function pickJarvisVoice(voices) {
   return voices[0];
 }
 
+// Unhurried. Named because the reactor's envelope needs the same number to
+// estimate where in the sentence the engine currently is.
+const JARVIS_RATE = 0.96;
+
 export class JarvisVoice {
   constructor() {
     this.voice = null;
@@ -288,7 +292,7 @@ export class JarvisVoice {
     return this.voice?.name || 'system default';
   }
 
-  speak(text, { onStart, onEnd } = {}) {
+  speak(text, { onStart, onEnd, onBoundary } = {}) {
     if (!this.enabled || !('speechSynthesis' in window)) { onEnd?.(); return; }
     const clean = speakable(text);
     if (!clean) { onEnd?.(); return; }
@@ -297,14 +301,28 @@ export class JarvisVoice {
     primeSpeech();   // resume() every time — Safari pauses the engine unbidden
     const chunks = chunkForSpeech(clean);
     this.speaking = true;
-    onStart?.();
+    // The spoken text and the rate, not just "started": the arc reactor
+    // reconstructs its envelope from them, because Web Speech audio cannot be
+    // routed into an AnalyserNode and there is no amplitude to read.
+    onStart?.({ text: clean, rate: JARVIS_RATE });
 
+    let offset = 0;
     chunks.forEach((chunk, index) => {
       const utterance = new SpeechSynthesisUtterance(chunk);
       if (this.voice) utterance.voice = this.voice;
       // Slightly slow and slightly low: JARVIS is unhurried, never breathless.
-      utterance.rate = 0.96;
+      utterance.rate = JARVIS_RATE;
       utterance.pitch = 0.85;
+
+      if (onBoundary) {
+        // charIndex is relative to this chunk; the listener is tracking the
+        // whole reply, so it has to be shifted or the envelope resets to the
+        // start of the sentence at every chunk boundary.
+        const base = offset;
+        utterance.onboundary = (event) => onBoundary(base + (event.charIndex || 0));
+      }
+      offset += chunk.length + 1;      // chunkForSpeech splits on whitespace
+
       if (index === chunks.length - 1) {
         utterance.onend = () => { this.speaking = false; onEnd?.(); };
         utterance.onerror = () => { this.speaking = false; onEnd?.(); };

@@ -8,9 +8,11 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=19';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=19';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=19';
+import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=20';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=20';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=20';
+import { reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
+  from '/static/reactor.js?v=20';
 
 const API = '';
 const store = {
@@ -700,6 +702,31 @@ function setMode(next) {
 function setHudState(state, status) {
   $('hud').dataset.state = state;
   if (status !== undefined) $('hud-status').textContent = status;
+  // The reactor shows the same four states. Driving it from here rather than
+  // from each call site means a state that is added later cannot forget it.
+  // 'speaking' is the exception: speakWithReactor sets that one, because it
+  // carries the text the envelope is built from.
+  if (state !== 'speaking') reactorState(state);
+}
+
+/** Speak, and let the reactor pulse along with it.
+ *
+ * Every spoken reply goes through here — the HUD's and the galaxy's — so the
+ * reactor never has to guess whether Jarvis is talking.
+ */
+function speakWithReactor(text, { onStart, onEnd } = {}) {
+  jarvis.speak(text, {
+    onStart: ({ text: spoken, rate } = {}) => {
+      reactorSpeaking(spoken || text, rate);
+      onStart?.();
+    },
+    onBoundary: reactorBoundary,
+    onEnd: () => {
+      reactorSilent();
+      reactorState('idle');
+      onEnd?.();
+    },
+  });
 }
 
 function hudAlert(message) {
@@ -712,7 +739,7 @@ function hudAlert(message) {
 
 function speakReply(text) {
   if (mode === 'voice') {
-    jarvis.speak(text, {
+    speakWithReactor(text, {
       onStart: () => setHudState('speaking', 'Speaking'),
       onEnd: () => {
         setHudState('idle', identityState.enrolled ? 'Say "Jarvis", or tap' : 'Tap to speak');
@@ -1255,7 +1282,7 @@ initGalaxy({
   // The galaxy speaks its answers but never the note it opens: the note is on
   // screen to be read. jarvis.speak already respects the voice on/off setting
   // and the chosen voice, so routing through it keeps one place in charge.
-  speak: (text) => { if (mode === 'voice' || jarvis.enabled) jarvis.speak(text); },
+  speak: (text) => { if (mode === 'voice' || jarvis.enabled) speakWithReactor(text); },
 });
 $('galaxy-btn').onclick = () => { closeDrawer(); openGalaxy(); };
 $('hud-galaxy').onclick = () => openGalaxy();
@@ -1301,7 +1328,10 @@ function voiceUsable() {
 }
 
 function armAudioUnlock() {
-  const prime = () => unlockSpeech();
+  // The AudioContext rides the same gesture. iOS refuses to start one outside
+  // a user interaction and refuses silently, so it has to happen here or the
+  // analyser path is dead on arrival on the device that needs it most.
+  const prime = () => { unlockSpeech(); reactorUnlock(); };
   for (const evt of ['pointerdown', 'touchstart', 'click', 'keydown']) {
     window.addEventListener(evt, prime, { capture: true, once: true, passive: true });
   }

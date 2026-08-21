@@ -314,6 +314,31 @@ html, body {
   padding: 6px 10px !important;
 }
 
+/* The arc reactor. Centred, above the graph, below the chrome — it is an
+   overlay you look through, so it must never sit on top of a button, and
+   pointer-events:none means a drag that starts on it still orbits the galaxy. */
+.reactor {
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  /* Above the graph (z-index 1), below the chrome (z-index 2). The stars are
+     behind both. Sharing the graph's index put the nodes on top of it, which
+     read as the reactor being *in* the galaxy rather than over it. */
+  z-index: 2;
+  pointer-events: none;
+  opacity: .8;
+  /* screen keeps the stars visible through the core instead of punching a
+     hole in the starfield. */
+  mix-blend-mode: screen;
+}
+.reactor.hidden { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* The rotation and the pulse are the whole element, so there is nothing to
+     tone down — it goes away. The toggle can still bring it back deliberately. */
+  .reactor { display: none; }
+}
+
 .galaxy-bar {
   position: absolute;
   z-index: 2;
