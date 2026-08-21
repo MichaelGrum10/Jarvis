@@ -473,9 +473,37 @@ model call per note on every reindex, against a budget where one calendar
 booking already spends most of a minute's tokens. Revisit only when a vault
 gets big enough that overlap actually misses.
 
-**The galaxy is hand-rolled canvas, not a 3D library.** No WebGL, nothing from
-a CDN, so it works with the phone offline and cannot break the app the way a
-mismatched cached module can. Cost: ~300 lines of projection maths.
+**The galaxy is WebGL, and the library is vendored.** `3d-force-graph` (with
+three.js bundled) lives in `web/vendor/`, not on a CDN — the phone loads it from
+the same origin as everything else, so the galaxy works offline and no third
+party can change what the app runs. It replaced an earlier hand-rolled canvas
+renderer, which cost ~300 lines of projection maths to do worse.
+
+**Node ids are array positions.** `/api/notes/graph` numbers each node by its
+index, and search results are those numbers, so the viewer can fly the camera to
+a note without a second lookup. The cost is that any reindex renumbers
+everything: the graph carries a `generation` fingerprint, and anything holding
+an id across a rebuild must check it or risk diving onto an unrelated star — a
+wrong answer that looks exactly like a right one. Things that must survive a
+rebuild (`/remember`'s `near`) reference notes by title instead.
+
+**The Mac agent dials out; the server never dials in.** Mail, Calendar, screen
+capture and Shortcuts only exist on a logged-in Mac, and that Mac is behind NAT
+with no static address. The alternative — forwarding a port on a home router —
+is a permanent public entry point in exchange for saving one outbound socket.
+So the agent holds a WebSocket open to `/api/agent/ws` through the Caddy
+endpoint that already exists, and a new connection replaces an old one because a
+Mac waking from sleep reconnects long before the dead socket's TCP timeout
+notices. `AGENT_SECRET` is separate from `BRIDGE_TOKEN` on purpose: they grant
+different capability surfaces.
+
+**Agent commands are an allowlist on both sides, and writes never act.** The
+server checks the command name against its own list, and the Mac checks it
+against a duplicated one — deliberately not shared, so a compromised server
+still cannot ask the Mac for something outside it. Arguments are typed and
+structured; there is no path from the socket to a shell. Anything that sends or
+changes state returns `pending_confirmation` rather than doing it, and every
+received command lands in `~/jarvis-agent.log` before it runs.
 
 ---
 

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  A LaunchAgent, not a LaunchDaemon. It lives in ~/Library/LaunchAgents, runs as
+  you, needs no administrator rights, and starts when you log in. That last part
+  matters beyond convenience: Mail, Calendar and screen capture only exist
+  inside a logged-in graphical session, so a root daemon starting at boot would
+  find nothing to talk to.
+
+  Replace YOUR-USERNAME below with the output of `whoami` (two places).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jarvis.agent</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/YOUR-USERNAME/jarvis-agent/jarvis_agent.py</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart it if it exits for any reason. The agent's own backoff handles
+         a server that is down; this handles the agent itself dying. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- launchd's own floor is 10s. Say so explicitly so a crash loop cannot
+         become a busy loop. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR-USERNAME/jarvis-agent</string>
+
+    <!-- Startup and crash output only. The command audit trail is written by
+         the agent itself to ~/jarvis-agent.log. -->
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR-USERNAME/jarvis-agent-launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR-USERNAME/jarvis-agent-launchd.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

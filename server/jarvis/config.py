@@ -196,6 +196,12 @@ class Settings(BaseSettings):
     bridge_token: str = Field("", description="Shared secret between server and Mac bridge")
     bridge_stale_minutes: int = 15
 
+    # --- mac companion agent (mail, calendar, screen, shortcuts) ---
+    # Deliberately not bridge_token. The two grant different capability
+    # surfaces, and sharing one secret would mean a leak of the messages token
+    # also hands over screen capture.
+    agent_secret: str = Field("", description="Shared secret for the Mac companion agent socket")
+
     # --- HUD ---
     # What the markets panel watches. Comma separated; indices are added
     # automatically and don't belong here.
@@ -290,6 +296,7 @@ class Settings(BaseSettings):
             ],
             "calendar": [("CALDAV_USERNAME", self.caldav_user), ("CALDAV_PASSWORD", self.caldav_pass)],
             "messages": [("BRIDGE_TOKEN", self.bridge_token)],
+            "agent": [("AGENT_SECRET", self.agent_secret)],
             # A boolean, not a credential — but it gates its tools the same way,
             # so the model is never offered a browser the image may not contain.
             "browser": [("BROWSER_ENABLED", self.browser_enabled)],

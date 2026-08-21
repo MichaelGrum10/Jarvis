@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import (
+    agent,
     auth,
     autonomy,
     bridge,
@@ -91,6 +92,7 @@ app.include_router(skills.router)
 app.include_router(browser.router)
 app.include_router(hud.router)
 app.include_router(notes.router)
+app.include_router(agent.router)
 
 
 @app.get("/api/health")
