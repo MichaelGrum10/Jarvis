@@ -41,6 +41,7 @@ at once:
 
 | How | Two-way | Notes |
 |---|---|---|
+| **Syncthing** — peer-to-peer, no account | yes | **[docs/syncthing.md](syncthing.md)**; the option to pick if the vault lives in iCloud Drive |
 | `git` clone + a cron `git pull` | yes, with conflicts you resolve | works with the Obsidian Git plugin; free |
 | `rsync` from a machine that has the vault | one-way | simplest; server-side captures get overwritten |
 | Obsidian Sync / iCloud Drive on a Mac, then rsync | one-way | needs a machine that stays on |
