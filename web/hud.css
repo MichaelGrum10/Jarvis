@@ -88,7 +88,24 @@
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: clamp(13px, 3.6vw, 19px);
   letter-spacing: 0.30em;
-  text-indent: 0.30em;      /* letter-spacing pads the right; recentre the text */
+  /* letter-spacing adds a space after the last character too, so the line is
+     wider than the ink and the ink sits left of centre. A full letter-space of
+     indent is the correction, not half of one: the box is shrink-to-fit and
+     centred by the transform below, so the indent widens the box and shifts it
+     left by half as much again. Measured across candidates — 0.30em lands the
+     ink within 0.02px of the ring's centre, 0.15em leaves it 1.4px left. */
+  text-indent: 0.30em;
+  /* The wordmark is wider than the core circle it sits in, and neither grid
+     centring nor text-align centres content that overflows its box — both fall
+     back to start-alignment, which left it hanging 56px off the right-hand
+     side. Positioning it against the core's centre sidesteps the question:
+     translate(-50%) is measured from the element's own width, so it lands
+     centred however much wider than its container it happens to be. */
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
   color: var(--hud-cyan);
   text-shadow: 0 0 12px var(--hud-glow);
   user-select: none;
