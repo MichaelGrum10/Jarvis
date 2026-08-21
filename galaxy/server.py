@@ -3,9 +3,10 @@
 
 Standard library only. That is a project constraint rather than a preference
 about HTTP clients: this runs from a systemd unit calling /usr/bin/python3
-directly, and Ubuntu 24.04 refuses system-wide pip installs (PEP 668), so
-adding the `anthropic` SDK would mean a venv and a different ExecStart. The
-Messages API is three headers and a JSON body; urllib is enough.
+directly, and Ubuntu 24.04 refuses system-wide pip installs (PEP 668), so a
+vendor SDK would mean a venv and a different ExecStart. Groq speaks the
+OpenAI-compatible chat-completions shape — two headers and a JSON body — and
+urllib is enough for that.
 
 Bound to loopback deliberately and not configurably. This box has a public IP
 and this page has no authentication, so binding 0.0.0.0 would publish the full
@@ -41,8 +42,7 @@ HERE = Path(__file__).resolve().parent
 VIEWER = HERE / "viewer"
 CONFIG = HERE / "config.json"
 
-API_URL = "https://api.anthropic.com/v1/messages"
-API_VERSION = "2023-06-01"
+API_URL = "https://api.groq.com/openai/v1/chat/completions"
 API_TIMEOUT = 60
 
 TOP_NOTES = 6              # how many notes are put in front of the model
@@ -53,7 +53,10 @@ MAX_QUESTION = 2000        # characters
 HISTORY_TURNS = 6          # 3 exchanges; enough for "and what about the other one?"
 MAX_SESSIONS = 50
 
-CONFIG_TEMPLATE = {"api_key": "PUT-YOUR-KEY-HERE", "model": "claude-sonnet-5"}
+CONFIG_TEMPLATE = {"api_key": "PUT-YOUR-KEY-HERE", "model": "openai/gpt-oss-120b"}
+# Where the key already lives: the assistant's own .env, one directory up.
+SHARED_ENV = HERE.parent / ".env"
+SHARED_ENV_KEY = "GROQ_API_KEY"
 
 # Common enough to be noise in a personal vault, and they drag every note into
 # every answer if left in.
@@ -100,10 +103,27 @@ def load_config() -> dict:
 
     key = (data.get("api_key") or "").strip()
     if not key or key == CONFIG_TEMPLATE["api_key"]:
+        # Fall back to the assistant's own key rather than making the user keep
+        # the same secret in two files. Two copies means two things to rotate
+        # and one of them silently going stale.
+        key = key_from_env()
+    if not key:
         raise RuntimeError(
-            "No API key yet. Put one in config.json — the placeholder is still there."
+            f"No API key. Put one in config.json, or set {SHARED_ENV_KEY} in {SHARED_ENV}."
         )
     return {"api_key": key, "model": data.get("model") or CONFIG_TEMPLATE["model"]}
+
+
+def key_from_env() -> str:
+    """Read GROQ_API_KEY out of the assistant's .env, if it is there."""
+    try:
+        for line in SHARED_ENV.read_text(encoding="utf-8").splitlines():
+            name, _, value = line.partition("=")
+            if name.strip() == SHARED_ENV_KEY:
+                return value.strip().strip("\"'")
+    except OSError:
+        pass
+    return ""
 
 
 # ------------------------------------------------------------------- the notes
@@ -243,12 +263,18 @@ def ask(question: str, notes: list[dict], history: deque, config: dict) -> str:
     else:
         context = "(No notes matched this question.)"
 
-    messages = list(history) + [{"role": "user", "content": f"{question}"}]
+    # OpenAI-compatible shape: the system prompt is the first message, not a
+    # top-level field the way Anthropic's Messages API has it.
+    messages = (
+        [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{context}"}]
+        + list(history)
+        + [{"role": "user", "content": question}]
+    )
 
     body = json.dumps({
         "model": config["model"],
         "max_tokens": MAX_TOKENS,
-        "system": f"{SYSTEM_PROMPT}\n\n{context}",
+        "temperature": 0.2,     # this is recall, not writing; keep it close to the notes
         "messages": messages,
     }).encode("utf-8")
 
@@ -257,8 +283,7 @@ def ask(question: str, notes: list[dict], history: deque, config: dict) -> str:
         data=body,
         headers={
             "content-type": "application/json",
-            "x-api-key": config["api_key"],
-            "anthropic-version": API_VERSION,
+            "authorization": f"Bearer {config['api_key']}",
         },
         method="POST",
     )
@@ -270,16 +295,23 @@ def ask(question: str, notes: list[dict], history: deque, config: dict) -> str:
         detail = exc.read().decode("utf-8", "replace")[:400]
         # Never let the key reach a log or a browser, whatever the API echoed.
         detail = detail.replace(config["api_key"], "<redacted>")
-        raise RuntimeError(f"Anthropic API returned {exc.code}: {detail}") from None
+        if exc.code == 429:
+            # Groq's free tier meters tokens per minute, and this shares that
+            # bucket with the assistant itself. Say so — a raw 429 body reads
+            # like a bug rather than a budget.
+            raise RuntimeError(
+                "Groq is rate limited right now — its free tier meters tokens per "
+                "minute, and Jarvis shares the same bucket. Try again shortly."
+            ) from None
+        raise RuntimeError(f"Groq returned {exc.code}: {detail}") from None
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"Could not reach the Anthropic API: {exc.reason}") from None
+        raise RuntimeError(f"Could not reach Groq: {exc.reason}") from None
 
-    # A refusal is an HTTP 200 with no useful text, so check before reading.
-    if payload.get("stop_reason") == "refusal":
-        return "The model declined to answer that one."
-
-    parts = [b.get("text", "") for b in payload.get("content", []) if b.get("type") == "text"]
-    return "".join(parts).strip() or "(empty answer)"
+    choices = payload.get("choices") or []
+    if not choices:
+        return "(no answer came back)"
+    text = (choices[0].get("message") or {}).get("content") or ""
+    return text.strip() or "(empty answer)"
 
 
 # ---------------------------------------------------------------- the handler

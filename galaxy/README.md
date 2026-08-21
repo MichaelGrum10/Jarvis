@@ -13,17 +13,25 @@ then open <http://localhost:4700>.
 
 ## The API key
 
-`server.py` creates `config.json` in this directory on first run, mode `600`:
+Answers come from **Groq** (OpenAI-compatible chat completions), which is what
+the assistant already uses — free tier, no second bill.
+
+You probably do not need to do anything. If `config.json` still has its
+placeholder, the server falls back to `GROQ_API_KEY` in `../.env` — the same
+key Jarvis uses. One secret, one place to rotate it.
+
+To override (a different key, or a different model), `server.py` creates
+`config.json` here on first run, mode `600`:
 
 ```json
-{ "api_key": "PUT-YOUR-KEY-HERE", "model": "claude-sonnet-5" }
+{ "api_key": "PUT-YOUR-KEY-HERE", "model": "openai/gpt-oss-120b" }
 ```
 
-Put your key in it over SSH. It is **gitignored** and lives outside `viewer/`,
-so it is not on any path the static file handler can reach — and the handler
-additionally refuses any request that resolves outside `viewer/`, including
-encoded traversal. Nothing but `server.py` ever reads it, and the API key is
-stripped from error text before anything is returned to the browser.
+Either way the key is treated as live. `config.json` is **gitignored** and
+lives outside `viewer/`, so it is not on any path the static handler can
+reach — and the handler additionally refuses any request that resolves outside
+`viewer/`, including encoded traversal. The key is stripped from API error
+text before anything is returned to the browser.
 
 The galaxy itself works without a key. Only the question box needs one.
 
@@ -45,5 +53,12 @@ warning instead of flying the camera to unrelated stars.
 
 ## Rate limit
 
-20 questions a minute, shared across everything. A stray script cannot burn
-through your API credits; you will just see a 429 telling you how long to wait.
+20 questions a minute, shared across everything, so a stray script cannot spend
+the whole budget in a loop.
+
+In practice Groq's own ceiling arrives first. Its free tier meters ~8,000
+tokens per minute, each question spends roughly 1,200-1,500 of them (six notes
+of context plus the answer), and **this shares that bucket with Jarvis
+itself** — so heavy questioning here will make the assistant's own capacity
+errors more likely. Groq's 429 is reported as a plain sentence rather than a
+raw error body, because it is a budget, not a bug.
