@@ -318,7 +318,9 @@ def test_asking_puts_the_matching_notes_in_the_system_prompt(api, stub_llm):
     system = stub_llm["messages"][0]
     assert system["role"] == "system"
     assert "146 BC" in system["content"], "the matching note's text must be in front of the model"
-    assert "ONLY from the notes" in system["content"]
+    # Case-insensitive: the rule has to be present, but the prompt gets
+    # reworded and a test that pins its capitalisation is testing prose.
+    assert "only from the notes" in system["content"].lower()
     assert body["answer"].startswith("Rome fought three")
 
 
@@ -391,3 +393,56 @@ def test_a_pool_failure_surfaces_the_pool_s_own_message(api, monkeypatch):
     # The pool names which endpoints it tried and why each declined; that is far
     # more actionable than "the model failed".
     assert "1 cooling" in res.json()["detail"]
+
+
+# --- small talk must not drag the camera around ---
+
+
+def test_small_talk_cites_nothing(api, stub_llm):
+    """A greeting is not a research question. If it cited a note, the viewer
+    would fly the camera somewhere for no reason at all."""
+    for chatter in ("hello", "how are you", "tell me a joke", "thanks"):
+        body = api.post("/api/notes/ask", json={"question": chatter}).json()
+        assert body["nodes"] == [], f"{chatter!r} should cite nothing"
+
+
+def test_a_single_incidental_word_is_not_a_citation(api, stub_llm):
+    """One shared body word is noise, not relevance — the exact case that made
+    'good morning' fly to any note containing the word."""
+    body = api.post("/api/notes/ask", json={"question": "three"}).json()
+    assert body["nodes"] == []
+
+
+def test_a_real_notes_question_still_cites(api, stub_llm):
+    body = api.post("/api/notes/ask", json={"question": "tell me about the punic wars"}).json()
+    assert body["nodes"], "a title match must still clear the floor"
+
+
+def test_the_answer_is_never_the_note_recited(api, stub_llm):
+    """The system prompt has to forbid it explicitly: the note is already on
+    screen, and reading it back is the failure mode this endpoint invites."""
+    api.post("/api/notes/ask", json={"question": "punic wars"})
+    system = stub_llm["messages"][0]["content"]
+    assert "Never recite the note back" in system
+    assert "sir" in system
+
+
+# --- the boot greeting's note count ---
+
+
+def test_summary_counts_notes_and_folders(api):
+    body = api.get("/api/notes/summary").json()
+    assert body["configured"] is True
+    assert body["notes"] == 2
+    assert body["folders"] >= 1
+
+
+def test_summary_needs_a_device_token(api):
+    del api.headers["Authorization"]
+    assert api.get("/api/notes/summary").status_code == 401
+
+
+def test_summary_is_calm_about_no_vault(api, monkeypatch):
+    monkeypatch.setattr(notes_mod, "notes_dir", lambda: None)
+    body = api.get("/api/notes/summary").json()
+    assert body == {"notes": 0, "folders": 0, "configured": False}

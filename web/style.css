@@ -487,5 +487,13 @@ html, body {
 @keyframes wake-pulse {
   50% { transform: scale(1.07); box-shadow: 0 0 52px rgba(77,163,255,.7), inset 0 0 34px rgba(77,163,255,.32); }
 }
-.wake-title { margin: 0 0 6px; font-size: 19px; font-weight: 600; }
+.wake-greeting {
+  margin: 0 auto 18px;
+  max-width: 30ch;
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.wake-greeting:empty { display: none; }
+.wake-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--accent); }
 .wake-sub { margin: 0; color: var(--muted); font-size: 13px; }

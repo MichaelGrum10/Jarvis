@@ -69,21 +69,42 @@ async def note(device: CurrentDevice, index: int):
 # --- asking the vault a question, from inside the galaxy ---
 
 TOP_NOTES = 6
+# A single body-word match is noise: "good morning" hits any note containing
+# "morning". Requiring 2 means either a title match (worth 5) or two distinct
+# body words, which is the difference between a question about the notes and a
+# question that merely shares a word with one. Below this the answer cites
+# nothing, so the camera stays where it is.
+MIN_SCORE = 2.0
 ANSWER_TOKENS = 400          # 2-3 sentences needs nowhere near this
 HISTORY_TURNS = 6            # 3 exchanges: enough for "and the other one?"
 MAX_SESSIONS = 50
 
-SYSTEM_PROMPT = """You are answering a question about this person's own markdown \
-notes. The notes below are the ones most relevant to what they asked.
+SYSTEM_PROMPT = """You are JARVIS, a butler. Dry, impeccably polite, and quietly \
+amused by almost everything.
 
-Rules, in order of importance:
+## Voice
+- Call them "sir" occasionally, where it lands. Every sentence is obsequious; never \
+is cold. Roughly one answer in three.
+- One genuinely funny line beats three bland ones. If nothing is funny, be brief \
+instead of reaching for a joke.
+- Understate everything. Never dramatise, never apologise twice, never announce what \
+you are about to do.
 
-1. Answer ONLY from the notes provided. They are the whole of what you know here.
-2. If the notes do not cover it, say so plainly in one sentence. Do not fill the \
-gap from general knowledge and do not soften it — "your notes don't cover that" is \
-a useful answer and a guess is not.
-3. Keep it to 2-3 sentences.
-4. Name the notes you used when it helps them find them again.
+## Answering from their notes
+One witty sentence, then the facts. That is the whole shape of an answer.
+
+- **Never recite the note back.** It is already on screen next to you, and reading \
+it aloud at them is the single thing you must not do. Give them what it *means*.
+- Answer only from the notes provided below. They are the whole of what you know here.
+- If the notes do not cover it, say so in one dry sentence and stop. Do not fill the \
+gap from general knowledge, and do not soften it — "you have written nothing on the \
+subject, sir" is a useful answer and a guess is not.
+- Name a note when it helps them find it again.
+
+## Small talk
+Greetings, jokes and idle remarks are not research questions. Answer them as \
+yourself, briefly and with some wit, and do not mention the notes at all — not even \
+to say they are irrelevant. Nobody asking after your health wants a literature review.
 
 The notes follow."""
 
@@ -126,7 +147,7 @@ async def ask(device: CurrentDevice, body: Question):
 
     store = vault.get_vault()
     hits = store.search(question, limit=TOP_NOTES)
-    notes = [note for note, _score in hits]
+    notes = [note for note, score in hits if score >= MIN_SCORE]
 
     if notes:
         context = "\n\n---\n\n".join(
@@ -166,4 +187,21 @@ async def ask(device: CurrentDevice, body: Question):
         "nodes": [n.index for n in notes],
         "generation": current,
         "stale": bool(body.generation) and body.generation != current,
+    }
+
+
+@router.get("/summary")
+async def summary(device: CurrentDevice):
+    """Note and folder counts, for the boot greeting.
+
+    Deliberately not /graph: that carries every excerpt in the vault, and the
+    greeting needs one integer. Loading the index is cached and cheap.
+    """
+    if vault.notes_dir() is None:
+        return {"notes": 0, "folders": 0, "configured": False}
+    notes = vault.get_vault().load()
+    return {
+        "notes": len(notes),
+        "folders": len({n.folder for n in notes}),
+        "configured": True,
     }

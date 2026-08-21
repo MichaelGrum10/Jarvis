@@ -16,7 +16,7 @@ const MAX_UTTERANCE_MS = 15000;
 const SILENCE_MS = 1400;
 
 import { getVoicesAsync, pickBritishVoice, unlockSpeech, IS_WEBKIT }
-  from '/static/voice.js?v=16';
+  from '/static/voice.js?v=17';
 
 const SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
 

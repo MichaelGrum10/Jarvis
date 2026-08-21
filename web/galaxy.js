@@ -19,7 +19,7 @@
  * and is unreachable from a phone without an SSH tunnel.
  */
 
-const LIB = '/static/vendor/3d-force-graph.min.js?v=16';
+const LIB = '/static/vendor/3d-force-graph.min.js?v=17';
 
 let graph = null;          // the ForceGraph3D instance
 let deps = { api: null };

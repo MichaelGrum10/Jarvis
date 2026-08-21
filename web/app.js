@@ -8,9 +8,9 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=16';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=16';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=16';
+import { Listener, Speaker, voiceSupport, defaultMode, saveMode, isMobile, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=17';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=17';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=17';
 
 const API = '';
 const store = {
@@ -102,7 +102,7 @@ function guessDeviceName() {
 async function enterApp() {
   checkSecureContext();
   hideDeadVoiceControls();
-  showWakeGate('Good to see you.');
+  showWakeGate();
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   $('status-dot').classList.add('on');
@@ -1333,19 +1333,54 @@ function hideDeadVoiceControls() {
 /* Requirement 2. The greeting cannot play on load, because nothing has been
  * tapped yet. Ask for that tap once per session, with the app visible behind
  * it, then speak. */
-function showWakeGate(greeting) {
+/**
+ * The boot greeting, timed by *this device's* clock.
+ *
+ * Deliberately not the server's: the VM sits in whatever region Oracle put it
+ * in, and would cheerfully wish you good morning at midnight. `new Date()` here
+ * is the phone in your hand.
+ */
+function greetingPrefix() {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning, sir.';
+  if (hour < 18) return 'Good afternoon, sir.';
+  return 'Good evening, sir.';
+}
+
+async function bootGreeting() {
+  const opening = greetingPrefix();
+  try {
+    const { notes, configured } = await api('/api/notes/summary');
+    if (!configured || !notes) return opening;
+    return `${opening} ${notes} note${notes === 1 ? '' : 's'} indexed, `
+      + 'all present and accounted for.';
+  } catch {
+    // No vault, or the call failed. The greeting still works; it just has
+    // nothing to count.
+    return opening;
+  }
+}
+
+function showWakeGate() {
   const gate = $('wake-gate');
   if (!voiceSupport.synthesis || !voiceSupport.secure) return;
   if (sessionStorage.getItem('jarvis_woke')) return;
 
+  const line = $('wake-greeting');
+  // Shown immediately with the time-based half, then completed when the count
+  // arrives. Whatever is on screen when you tap is what gets spoken, so a fast
+  // tap is never left speaking something different from what it displayed.
+  line.textContent = greetingPrefix();
   gate.classList.remove('hidden');
+  bootGreeting().then((full) => { line.textContent = full; });
+
   const wake = () => {
     sessionStorage.setItem('jarvis_woke', '1');
     // Order matters: unlock inside the gesture, and only then speak. Speaking
     // first is the mistake that leaves Safari mute for the whole session.
     unlockSpeech();
     gate.classList.add('hidden');
-    if (greeting) jarvis.speak(greeting);
+    jarvis.speak(line.textContent);
   };
   gate.addEventListener('click', wake, { once: true });
   gate.addEventListener('touchend', wake, { once: true });
