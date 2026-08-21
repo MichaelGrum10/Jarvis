@@ -38,6 +38,23 @@ iCloud Drive and let Obsidian's own sync handle the phone.
 
 ---
 
+## 0. Check the vault actually exists
+
+Worth thirty seconds, because "my iCloud notes folder" is easy to assume and
+easy to be wrong about:
+
+```bash
+find "$HOME/Library/Mobile Documents/com~apple~CloudDocs" -name '*.md' | wc -l
+```
+
+Zero means there is nothing to sync yet and Syncthing will happily replicate an
+empty directory. Create the folder and put some markdown in it first — a vault
+is just `.md` files in nested folders, and Obsidian is optional.
+
+Note also that **Apple Notes.app is not iCloud Drive**. Notes.app keeps its
+data in a private CloudKit database rather than as files, so Syncthing cannot
+see it at all; that route needs an export step first.
+
 ## 1. Set your two variables
 
 Every command below uses these. Edit the second line — nothing else needs
