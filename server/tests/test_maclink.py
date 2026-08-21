@@ -83,25 +83,53 @@ def test_socket_without_credentials_is_closed(client, secret):
 def test_socket_with_the_wrong_secret_is_closed(client, secret):
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect(
-            "/api/agent/ws", headers={"Authorization": "Bearer nearly-the-right-secret"}
+            "/api/agent/ws", headers={"X-Agent-Secret": "nearly-the-right-secret"}
         ):
             pass
+
+
+def test_basic_auth_does_not_pass_for_the_agent_secret(client, secret):
+    """Caddy's basic auth header must not be mistaken for the agent's own."""
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(
+            "/api/agent/ws", headers={"Authorization": "Basic dXNlcjpwYXNzd29yZA=="}
+        ):
+            pass
+
+
+def test_the_secret_still_works_as_a_bearer_token(client, secret, token):
+    """For a direct connection to 127.0.0.1:8000, with no proxy in the way."""
+    with client.websocket_connect(
+        "/api/agent/ws", headers={"Authorization": f"Bearer {SECRET}"}
+    ):
+        assert client.get("/api/agent/status", headers=auth(token)).json()["connected"] is True
 
 
 def test_socket_is_closed_when_no_secret_is_configured(client, monkeypatch):
     """An agent endpoint with no secret set is an open remote-control socket."""
     monkeypatch.setattr(get_settings(), "agent_secret", "")
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect(
-            "/api/agent/ws", headers={"Authorization": f"Bearer {SECRET}"}
-        ):
+        with client.websocket_connect("/api/agent/ws", headers={"X-Agent-Secret": SECRET}):
             pass
+
+
+def test_the_agent_sends_its_secret_where_caddy_will_not_eat_it():
+    headers = agent_mod._headers(
+        {"secret": SECRET, "label": "mac", "basic_auth": {"username": "m", "password": "pw"}}
+    )
+    assert headers["X-Agent-Secret"] == SECRET
+    assert headers["Authorization"] == "Basic bTpwdw=="      # basic auth, not the secret
+
+
+def test_no_basic_auth_header_when_none_is_configured():
+    headers = agent_mod._headers({"secret": SECRET, "label": "mac"})
+    assert "Authorization" not in headers
 
 
 def test_the_right_secret_connects(client, secret, token):
     with client.websocket_connect(
         "/api/agent/ws",
-        headers={"Authorization": f"Bearer {SECRET}", "X-Agent-Label": "test-mac"},
+        headers={"X-Agent-Secret": SECRET, "X-Agent-Label": "test-mac"},
     ):
         status = client.get("/api/agent/status", headers=auth(token)).json()
         assert status["connected"] is True

@@ -79,8 +79,19 @@ server URL and the shared secret in it:
     {
       "server": "wss://michael-jarvis.duckdns.org/api/agent/ws",
       "secret": "the same value as AGENT_SECRET on the server",
-      "label": "michaels-laptop"
+      "label": "michaels-laptop",
+      "basic_auth": {"username": "your Caddy user", "password": "your Caddy password"}
     }
+
+`basic_auth` is the site-wide HTTP basic auth Caddy enforces — the same username
+and password your browser asks for. It is not optional here: without it Caddy
+returns 401 and the handshake never reaches Jarvis. Leave `username` empty only
+if you have removed basic auth from the site.
+
+The agent's own secret travels in `X-Agent-Secret`, not `Authorization`, because
+basic auth has already claimed `Authorization` and one request cannot carry two.
+Two independent credentials guard the socket, which is the intent: the Caddy
+password gets you to the door, the agent secret opens it.
 
 On the server, generate the secret and put it in `.env` — over SSH, not through
 chat:

@@ -49,8 +49,13 @@ async def agent_socket(websocket: WebSocket):
         await websocket.close(code=1008, reason="Agent link not configured")
         return
 
-    offered = websocket.headers.get("authorization", "")
-    offered = offered.removeprefix("Bearer ").strip()
+    # The secret rides its own header, not Authorization. Caddy's basic auth sits
+    # in front of this endpoint and claims Authorization for itself — and a
+    # request cannot carry two of them. Bearer is still accepted for a direct
+    # connection to 127.0.0.1:8000, which has no proxy in the way.
+    offered = websocket.headers.get("x-agent-secret", "").strip()
+    if not offered:
+        offered = websocket.headers.get("authorization", "").removeprefix("Bearer ").strip()
     # compare_digest, not ==: string comparison returns early on the first
     # wrong byte, and over enough attempts that timing distinguishes a nearly
     # correct secret from a wholly wrong one.

@@ -43,6 +43,7 @@ Configuration lives in ~/.jarvis-agent.json (created on first run, mode 600).
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
 import json
 import logging
@@ -67,6 +68,9 @@ CONFIG_TEMPLATE = {
     "server": "wss://michael-jarvis.duckdns.org/api/agent/ws",
     "secret": "PUT-YOUR-AGENT-SECRET-HERE",
     "label": platform.node() or "mac",
+    # Only if Caddy's basic auth guards the site — it does. Leave the username
+    # empty to send no basic auth at all.
+    "basic_auth": {"username": "", "password": ""},
 }
 
 # Backoff for reconnects. A Mac wakes from sleep to a dead socket several times
@@ -300,12 +304,28 @@ def _connect(url: str, headers: dict):
         return websockets.connect(url, extra_headers=headers, **options)
 
 
-async def session(config: dict) -> None:
+def _headers(config: dict) -> dict:
+    """What the handshake carries.
+
+    The agent secret rides X-Agent-Secret rather than Authorization, because
+    Caddy's basic auth sits in front of the endpoint and claims Authorization
+    for itself — and one request cannot carry two of them. If basic auth is
+    configured here, it goes in the header Caddy expects; the agent's own secret
+    is untouched by it.
+    """
     headers = {
-        "Authorization": f"Bearer {config['secret']}",
+        "X-Agent-Secret": config["secret"],
         "X-Agent-Label": config.get("label", "mac"),
     }
-    async with _connect(config["server"], headers) as socket:
+    basic = config.get("basic_auth") or {}
+    if basic.get("username"):
+        pair = f"{basic['username']}:{basic.get('password', '')}".encode()
+        headers["Authorization"] = "Basic " + base64.b64encode(pair).decode()
+    return headers
+
+
+async def session(config: dict) -> None:
+    async with _connect(config["server"], _headers(config)) as socket:
         log.info("Connected to %s", config["server"])
         async for raw in socket:
             try:
