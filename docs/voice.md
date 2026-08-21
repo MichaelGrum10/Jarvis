@@ -175,6 +175,23 @@ The microphone button on the type bar is dictation only — it fills the box and
 leaves the sending to you. Talking to the ring is the spoken path, and that one
 records real audio for speaker verification.
 
+## Where the panels sit
+
+**Wide (980px and up)** — docked to the left and right edges, widths clamped so
+they scale with the display rather than being one number that is cramped on a
+laptop and lost on a monitor. Above 1600px they get wider and move further out.
+Each panel is positioned individually against the viewport rather than placed in
+a grid overlaying the screen: the container's `max-width: 1100px` used to
+survive into the wide layout, which pinned the right-hand column 1100px from the
+left edge — so on a large display it landed in the middle, on top of the ring.
+
+**Narrow** — stacked under the ring, and the HUD scrolls. Centring a flex column
+that overflows clips the top *and* makes it unreachable, so below the breakpoint
+the HUD flows from the top instead.
+
+Measured at seven sizes from a 393px phone to a 2560px ultrawide: docked from
+iPad-landscape up, never overlapping the ring or the type bar, never off screen.
+
 ## Moving the panels
 
 Drag a panel by its heading. It leaves the layout and stays where you put it, on

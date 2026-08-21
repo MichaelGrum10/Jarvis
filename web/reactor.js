@@ -49,6 +49,8 @@ const SLOW_MS = 1500;
 // Longer than SLOW_MS on purpose: quick to protect the frame rate, slow to
 // trust that the pressure is gone.
 const RECOVER_MS = 5000;
+// Frames during startup are not evidence about the device.
+const GRACE_MS = 2500;
 const DPR_CAP = 2;                   // retina is plenty; 3x is just overdraw
 
 // How fast the core follows the signal. Attack is quick so a consonant lands;
@@ -73,6 +75,7 @@ let hidden = false;
 let simple = false;              // the degraded two-ring version
 let slowStreak = 0;              // timestamp the slow run began, 0 when keeping up
 let fastStreak = 0;              // the same, for deciding it is safe to un-degrade
+let startedAt = 0;               // when the loop last began, for the startup grace
 let lastDraw = 0;
 let spin = 0;
 let level = 0;                   // smoothed 0..1, what the core actually draws
@@ -278,6 +281,7 @@ export function initReactor(host, options = {}) {
 function start() {
   if (running || hidden || document.hidden || !canvas) return;
   running = true;
+  startedAt = performance.now();
   lastDraw = 0;
   slowStreak = 0;
   fastStreak = 0;
@@ -301,7 +305,12 @@ function tick(now) {
   // Measured from real frame times, not from a device sniff. iOS throttles rAF
   // hard while audio is playing — which is exactly when this element matters —
   // and no amount of user-agent checking would predict when.
-  if (since > 1000 / SLOW_FPS) {
+  // Startup is janky everywhere — fonts, panels, the first fetches — and
+  // judging the device on those frames degrades a machine that is perfectly
+  // capable, then makes it wait out the recovery window to prove it.
+  if (now - startedAt < GRACE_MS) {
+    slowStreak = 0;
+  } else if (since > 1000 / SLOW_FPS) {
     fastStreak = 0;
     if (!slowStreak) slowStreak = now;
     else if (now - slowStreak > SLOW_MS) simple = true;
@@ -374,10 +383,20 @@ function draw(now) {
   ctx.translate(half, half);
 
   if (simple) {
-    // The degraded version: two rings, flat strokes, no gradients or shadows.
-    // Everything dropped here is a per-frame allocation or a blur.
-    ring(outer, colours.ring, 0.5, 2);
-    ring(core * 1.6, colours.core, 0.75, 3);
+    // The degraded version: flat strokes and a flat core, no gradients. What is
+    // dropped is the per-frame gradient allocation, not the core itself — a
+    // version with no core stops being an arc reactor, and this used to draw
+    // two hollow rings around an empty middle.
+    if (opts.outerRing) ring(outer, colours.ring, 0.5, 2);
+    ring(outer * 0.5, colours.ring, 0.4, 2);
+    ctx.fillStyle = rgba(colours.core, 0.5 + energy * 0.3);
+    ctx.beginPath();
+    ctx.arc(0, 0, core * 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = rgba([255, 255, 255], 0.75 + energy * 0.2);
+    ctx.beginPath();
+    ctx.arc(0, 0, core, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
     return;
   }

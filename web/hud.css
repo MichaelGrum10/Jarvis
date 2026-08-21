@@ -208,28 +208,50 @@
  * reactor stays the centre of attention at every size: the panels are glanceable
  * detail, not the point. */
 
+/* Narrow — a phone, or a split window. The panels stack under the ring and the
+   HUD scrolls, because on a 390px screen there is no "side" to put them on. */
 .hud-panels {
-  display: grid;
-  grid-template-columns: 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
   width: 100%;
-  max-width: 1100px;
-  padding: 0 16px 24px;
+  max-width: 560px;
 }
 
-@media (min-width: 900px) {
-  .hud-panels {
-    position: absolute;
-    inset: 0;
-    padding: 96px 32px;
-    grid-template-columns: 1fr 2fr 1fr;
-    align-items: start;
-    pointer-events: none;
+/* Wide — dock them to the edges.
+   Each panel is positioned individually rather than placed in a grid that
+   overlays the screen: the container's max-width used to survive into the wide
+   layout, so the "right" column was pinned 1100px from the left edge and landed
+   in the middle of a large display, on top of the ring.
+
+   display:contents dissolves the wrapper so the panels position against the
+   viewport, and the widths are clamped so they scale with the device instead of
+   being one fixed number that is cramped on a laptop and lost on a monitor. */
+@media (min-width: 980px) {
+  .hud-panels { display: contents; }
+
+  .hud-panel {
+    position: fixed;
+    width: clamp(230px, 20vw, 340px);
+    max-height: calc(50vh - 60px);
+    overflow-y: auto;
+    z-index: 62;
   }
-  #panel-markets { grid-column: 1; }
-  #panel-briefing { grid-column: 3; }
-  .hud-panel { pointer-events: auto; }
+
+  #panel-markets   { left: 20px;  top: calc(var(--safe-t) + 74px); }
+  #panel-briefing  { right: 20px; top: calc(var(--safe-t) + 74px); }
+  /* Under markets on the left, so a long answer never grows into the ring. */
+  #panel-transcript { left: 20px; bottom: calc(var(--safe-b) + 20px); }
 }
+
+/* Wider still: there is room to breathe, and room for bigger panels. */
+@media (min-width: 1600px) {
+  .hud-panel { width: clamp(300px, 18vw, 420px); }
+  #panel-markets, #panel-transcript { left: 36px; }
+  #panel-briefing { right: 36px; }
+}
+
+
 
 .hud-panel {
   border: 1px solid rgba(80, 200, 255, 0.18);
@@ -364,3 +386,27 @@
   padding: 7px 13px;
 }
 .hud-suggestions .chip:active { background: rgba(79, 214, 247, 0.16); }
+
+/* A moved panel is positioned by its inline left/top. The docked rules also set
+   `right` or `bottom`, and an ID selector outranks a class — so those have to be
+   cleared at ID specificity or a dragged transcript stretches between its inline
+   top and its docked bottom. */
+#panel-markets.moved,
+#panel-briefing.moved,
+#panel-transcript.moved {
+  right: auto;
+  bottom: auto;
+  max-height: min(50vh, 440px);
+}
+
+/* On a narrow screen everything stacks, which is taller than the viewport.
+   Centring a flex column that overflows clips the top *and* makes it
+   unscrollable, so below the docking breakpoint the HUD flows from the top. */
+@media (max-width: 979px) {
+  .hud {
+    justify-content: flex-start;
+    overflow-y: auto;
+    gap: 18px;
+  }
+  .hud-stage { flex: none; }
+}
