@@ -86,28 +86,32 @@ async def _markets() -> dict:
 
 
 async def _calendar() -> dict:
-    from .integrations.apple_calendar import get_calendar
+    # Through the source selector, not straight to CalDAV: with a Mac connected
+    # and no iCloud credentials, going direct made the panel report "calendar is
+    # not configured" while a machine that could answer sat one socket away.
+    from .integrations.mac_source import read_events
 
     settings = get_settings()
     now = dt.datetime.now(ZoneInfo(settings.timezone))
-    events = await get_calendar().events_between(now, now + dt.timedelta(days=2))
+    events, source = await read_events(now, now + dt.timedelta(days=2))
 
     upcoming = [e.to_dict() for e in events if e.start >= now.isoformat()][:3]
     soon = (now + dt.timedelta(hours=1)).isoformat()
     for event in upcoming:
         event["imminent"] = event["start"] <= soon
-    return {"events": upcoming}
+    return {"events": upcoming, "source": source}
 
 
 async def _inbox() -> dict:
-    from .integrations.apple_mail import get_mail
+    from .integrations.mac_source import read_recent_mail
 
-    recent = await get_mail().recent(limit=5, unread_only=True, days=3)
+    recent, source = await read_recent_mail(days=3, limit=5, unread_only=True, mailbox="INBOX")
     return {
         "messages": [
             {"from": (m.sender or m.sender_email)[:40], "subject": (m.subject or "")[:50]}
             for m in recent
-        ][:5]
+        ][:5],
+        "source": source,
     }
 
 

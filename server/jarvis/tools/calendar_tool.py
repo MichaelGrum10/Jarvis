@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 
 from .. import cache
 from ..config import get_settings
 from ..integrations.apple_calendar import get_calendar
+from ..integrations.mac_source import read_events
 from ..utils.meridiem import clarification_question, resolve_meridiem
 from ..utils.timeparse import local_now, meridiem_is_ambiguous, parse_when
 from . import recent_events
 from .base import ToolContext, ToolResult, registry
+
+log = logging.getLogger(__name__)
 
 # A booking a minute or two old is a clock difference, not a request to write
 # into the past. Anything older was meant differently.
@@ -81,11 +85,16 @@ async def calendar_list(start: str, end: str = "", calendar: str = "", ctx: Tool
         end_dt = start_dt + dt.timedelta(days=1)
 
     key = f"{start_dt.isoformat()}|{end_dt.isoformat()}|{calendar}"
-    payload = cache.get("calendar", key)
-    if payload is None:
-        events = await get_calendar().events_between(start_dt, end_dt, calendar)
+    # The source is cached with the events. Storing only the events meant a
+    # cached answer from the Mac came back labelled iCloud on the next hit,
+    # which is worse than not reporting a source at all.
+    cached = cache.get("calendar", key)
+    if cached is None:
+        events, source = await read_events(start_dt, end_dt, calendar)
         payload = [e.to_dict() for e in events]
-        cache.put("calendar", key, payload)
+        cache.put("calendar", key, {"events": payload, "source": source})
+    else:
+        payload, source = cached["events"], cached["source"]
     # Only when the range picked out a handful. Remembering a whole week would
     # make "it" ambiguous rather than resolvable, which is the opposite of the point.
     if len(payload) <= 3:
@@ -96,6 +105,10 @@ async def calendar_list(start: str, end: str = "", calendar: str = "", ctx: Tool
             "range": {"start": start_dt.isoformat(), "end": end_dt.isoformat()},
             "count": len(payload),
             "events": payload,
+            # Which machine answered. Two sources that can disagree — a local
+            # calendar the Mac sees and iCloud does not — make "where did this
+            # come from" a question worth being able to answer.
+            "source": source,
         },
         display={"type": "calendar", "events": payload},
     )
@@ -136,7 +149,7 @@ async def calendar_list(start: str, end: str = "", calendar: str = "", ctx: Tool
         },
         "required": ["title", "start"],
     },
-    requires="calendar",
+    requires="calendar_icloud",
     tags=["calendar", "write"],
 )
 async def calendar_create(
@@ -228,7 +241,7 @@ async def calendar_create(
         },
         "required": ["uid"],
     },
-    requires="calendar",
+    requires="calendar_icloud",
     tags=["calendar", "write"],
 )
 async def calendar_update(
@@ -305,7 +318,7 @@ async def calendar_update(
         },
         "required": ["uid"],
     },
-    requires="calendar",
+    requires="calendar_icloud",
     confirm=True,
     tags=["calendar", "write", "destructive"],
 )
@@ -332,7 +345,7 @@ async def calendar_delete(uid: str, calendar: str = "", ctx: ToolContext = None)
         },
         "required": ["date"],
     },
-    requires="calendar",
+    requires="calendar_icloud",
     tags=["calendar"],
 )
 async def calendar_find_free(

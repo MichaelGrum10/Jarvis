@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import datetime as dt
+import logging
+
+from ..config import get_settings
 from ..integrations.apple_mail import get_mail
+from ..integrations.mac_source import read_recent_mail, search_mail
 from .base import ToolResult, registry
+
+log = logging.getLogger(__name__)
 
 # Cheap heuristics so the model gets a pre-sorted inbox instead of 40 flat rows.
 _IMPORTANT_HINTS = (
@@ -68,9 +75,7 @@ def _score(item) -> tuple[int, list[str]]:
 async def mail_summary(
     days: int = 3, limit: int = 25, unread_only: bool = False, mailbox: str = "INBOX"
 ):
-    items = await get_mail().recent(
-        limit=min(limit, 60), mailbox=mailbox, unread_only=unread_only, days=days
-    )
+    items, source = await read_recent_mail(days, limit, unread_only, mailbox)
     ranked = []
     for item in items:
         score, reasons = _score(item)
@@ -92,6 +97,7 @@ async def mail_summary(
                 if r not in important
             ][:20],
             "hint": "Use mail_read with a uid to show the full body of any of these.",
+            "source": source,
         },
         display={"type": "mail_list", "messages": ranked[:20]},
     )
@@ -111,7 +117,7 @@ async def mail_summary(
         },
         "required": ["uid"],
     },
-    requires="mail",
+    requires="mail_icloud",
     tags=["mail"],
 )
 async def mail_read(uid: str, mailbox: str = "INBOX"):
@@ -136,10 +142,20 @@ async def mail_read(uid: str, mailbox: str = "INBOX"):
     tags=["mail"],
 )
 async def mail_search(query: str, limit: int = 20, mailbox: str = "INBOX"):
-    items = await get_mail().search(query, limit=limit, mailbox=mailbox)
+    items, source = await search_mail(query, limit, mailbox)
     rows = [i.to_dict() for i in items]
     return ToolResult.success(
-        {"query": query, "count": len(rows), "results": rows},
+        {
+            "query": query,
+            "count": len(rows),
+            "results": rows,
+            "source": source,
+            # Said plainly so nothing reads an empty result as an empty mailbox.
+            # The two sources genuinely search different things.
+            "searched": (
+                "subjects and senders only" if source == "Mac" else "subjects, senders and bodies"
+            ),
+        },
         display={"type": "mail_list", "messages": rows},
     )
 
@@ -160,7 +176,7 @@ async def mail_search(query: str, limit: int = 20, mailbox: str = "INBOX"):
         },
         "required": ["to", "subject", "body"],
     },
-    requires="mail",
+    requires="mail_icloud",
     confirm=True,
     tags=["mail", "write"],
 )

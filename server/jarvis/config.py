@@ -287,14 +287,32 @@ class Settings(BaseSettings):
         return self.data_dir / "jarvis.db"
 
     def missing_for(self, feature: str) -> list[str]:
-        """Which env vars a feature still needs. Drives the /status page."""
+        """Which env vars a feature still needs. Drives the /status page.
+
+        `mail` and `calendar` ask whether the capability exists at all, which is
+        what decides whether the model is offered the tool. Either source will
+        do — iCloud's credentials, or a Mac agent that can read Mail.app and
+        Calendar.app directly. `mail_icloud` and `calendar_icloud` ask the
+        narrower question, for the code deciding which source to actually use.
+        """
+        icloud_mail = [
+            ("ICLOUD_EMAIL", self.icloud_email),
+            ("ICLOUD_APP_PASSWORD", self.icloud_app_password),
+        ]
+        icloud_calendar = [
+            ("CALDAV_USERNAME", self.caldav_user),
+            ("CALDAV_PASSWORD", self.caldav_pass),
+        ]
+        # Configured, not connected. Tool visibility must not flap every time a
+        # laptop lid closes — the tool itself says so when the Mac is away.
+        via_mac = [("ICLOUD_EMAIL or AGENT_SECRET", self.agent_secret)]
+
         needs = {
             "llm": [("GROQ_API_KEY", self.groq_api_key)],
-            "mail": [
-                ("ICLOUD_EMAIL", self.icloud_email),
-                ("ICLOUD_APP_PASSWORD", self.icloud_app_password),
-            ],
-            "calendar": [("CALDAV_USERNAME", self.caldav_user), ("CALDAV_PASSWORD", self.caldav_pass)],
+            "mail": icloud_mail if not self.agent_secret else via_mac,
+            "mail_icloud": icloud_mail,
+            "calendar": icloud_calendar if not self.agent_secret else via_mac,
+            "calendar_icloud": icloud_calendar,
             "messages": [("BRIDGE_TOKEN", self.bridge_token)],
             "agent": [("AGENT_SECRET", self.agent_secret)],
             # A boolean, not a credential — but it gates its tools the same way,

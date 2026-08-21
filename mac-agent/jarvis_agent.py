@@ -314,9 +314,20 @@ def mail_draft(args: dict) -> dict:
 
 @command("calendar.list_events")
 def calendar_list_events(args: dict) -> dict:
-    days = _int(args, "days", 1, 1, 30)
+    # A window in minutes either side of now. `days` still works for a simple
+    # "next N days" caller; the offsets are what a real date range needs, since
+    # "today" asked at 2pm starts in the past.
+    if "start_offset" in args or "end_offset" in args:
+        start_offset = _int(args, "start_offset", 0, -525_600, 525_600)
+        end_offset = _int(args, "end_offset", 1440, -525_600, 525_600)
+    else:
+        start_offset = 0
+        end_offset = _int(args, "days", 1, 1, 30) * 1440
+    if end_offset <= start_offset:
+        raise ValueError("end_offset must be after start_offset")
+
     events = []
-    for row in _records(_osascript("calendar_list.applescript", days)):
+    for row in _records(_osascript("calendar_list.applescript", start_offset, end_offset)):
         if len(row) < 7:
             continue
         uid, summary, calendar, location, all_day, start, end = row[:7]
@@ -333,7 +344,12 @@ def calendar_list_events(args: dict) -> dict:
     # list is grouped by calendar rather than by time — which is not the order
     # anyone means by "what's on today".
     events.sort(key=lambda e: e["start"])
-    return {"source": "Calendar.app", "days": days, "events": events, "count": len(events)}
+    return {
+        "source": "Calendar.app",
+        "window": {"start_offset": start_offset, "end_offset": end_offset},
+        "events": events,
+        "count": len(events),
+    }
 
 
 @command("screen.capture")

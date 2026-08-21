@@ -173,7 +173,11 @@ class _Event:
 @pytest.fixture
 def fake_calendar(monkeypatch):
     cal = FakeCalendar()
+    # Two places, because reads and writes reach the calendar differently now:
+    # writes still use the name bound in calendar_tool, while reads go through
+    # the source selector, which imports it from apple_calendar at call time.
     monkeypatch.setattr("jarvis.tools.calendar_tool.get_calendar", lambda: cal)
+    monkeypatch.setattr("jarvis.integrations.apple_calendar.get_calendar", lambda: cal)
     return cal
 
 

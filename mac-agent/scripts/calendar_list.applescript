@@ -1,6 +1,12 @@
--- Events from Calendar.app, for the next N days.
+-- Events from Calendar.app, over a window around now.
 --
---   osascript calendar_list.applescript 3
+--   osascript calendar_list.applescript -840 600
+--
+-- The window is given as two offsets in minutes from the current moment, and
+-- either may be negative. Offsets rather than dates because writing a date
+-- literal in AppleScript means matching the machine's locale exactly, and
+-- "what's on today" asked at 2pm has to reach back to this morning — a
+-- forward-only window would silently drop the 9am standup.
 --
 -- Output is one record per event. Fields are separated by ASCII 31 and records
 -- by ASCII 30 — control characters, so a summary containing a comma, a tab, a
@@ -14,9 +20,11 @@
 -- The caller reassembles them.
 
 on run argv
-	set daysAhead to (item 1 of argv) as integer
-	set startDate to (current date)
-	set endDate to startDate + (daysAhead * days)
+	set startOffset to (item 1 of argv) as integer
+	set endOffset to (item 2 of argv) as integer
+	set rightNow to (current date)
+	set startDate to rightNow + (startOffset * minutes)
+	set endDate to rightNow + (endOffset * minutes)
 
 	set fieldSep to ASCII character 31
 	set recSep to ASCII character 30
