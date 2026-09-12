@@ -31,7 +31,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..config import Settings, get_settings
-from ..integrations import elevenlabs
+from ..integrations import tts
 from ..security import CurrentDevice, issue_speech_ticket, read_speech_ticket
 from ..voiceprint import VoiceprintError, embed_wav
 from .identity import load_profile, raise_alert, strip_wake_word, wake_word_present
@@ -211,19 +211,19 @@ async def speak(device: CurrentDevice, body: Speech, settings: Settings = Depend
     an <audio> cannot send an Authorization header, so the URL carries a signed,
     short-lived, single-line ticket instead of a device token.
     """
-    text = elevenlabs.speakable_length(body.text)
+    text = tts.speakable_length(body.text)
     if not text:
         raise HTTPException(400, "Nothing to say.")
-    if not elevenlabs.configured(settings):
-        raise HTTPException(503, "ElevenLabs is not configured.")
+    if not tts.configured(settings):
+        raise HTTPException(503, "The cloned voice is not configured.")
 
-    key = elevenlabs.voice_key(text, settings)
+    key = tts.voice_key(text, settings)
     _sweep()
     _pending[key] = (text, time.time())
     return {
         "url": f"/api/voice/audio/{key}?t={issue_speech_ticket(key, settings)}",
-        "cached": elevenlabs.cached_path(key, settings) is not None,
-        "voice": "elevenlabs",
+        "cached": tts.cached_path(key, settings) is not None,
+        "voice": tts.provider(settings),
     }
 
 
@@ -238,7 +238,7 @@ async def audio(key: str, t: str = "", settings: Settings = Depends(get_settings
     read_speech_ticket(t, key, settings)
 
     entry = _pending.get(key)
-    cached = elevenlabs.cached_path(key, settings)
+    cached = tts.cached_path(key, settings)
     if entry is None and cached is None:
         raise HTTPException(404, "That line has expired. Ask again.")
 
@@ -250,7 +250,7 @@ async def audio(key: str, t: str = "", settings: Settings = Depends(get_settings
                 while chunk := handle.read(65536):
                     yield chunk
             return
-        async for chunk in elevenlabs.stream(text, settings):
+        async for chunk in tts.stream(text, settings):
             yield chunk
 
     try:
@@ -260,8 +260,8 @@ async def audio(key: str, t: str = "", settings: Settings = Depends(get_settings
         stream = body()
         first = await stream.__anext__()
     except StopAsyncIteration:
-        raise HTTPException(502, "ElevenLabs returned no audio.") from None
-    except elevenlabs.SpeechError as exc:
+        raise HTTPException(502, f"{tts.label(settings)} returned no audio.") from None
+    except tts.SpeechError as exc:
         raise HTTPException(503, str(exc), headers={"X-Speech-Quota": "1" if exc.quota else "0"}) from None
 
     async def rest() -> AsyncIterator[bytes]:
@@ -275,7 +275,7 @@ async def audio(key: str, t: str = "", settings: Settings = Depends(get_settings
         headers={
             # Private: it is the owner's voice saying the owner's business.
             "Cache-Control": "private, max-age=3600",
-            "X-Speech-Source": "cache" if cached else "elevenlabs",
+            "X-Speech-Source": "cache" if cached else tts.provider(settings),
         },
     )
 
@@ -284,7 +284,9 @@ async def audio(key: str, t: str = "", settings: Settings = Depends(get_settings
 async def speech_status(device: CurrentDevice, settings: Settings = Depends(get_settings)):
     """Whether the cloned voice is available, for the status line to explain."""
     return {
-        "configured": elevenlabs.configured(settings),
+        "configured": tts.configured(settings),
+        "provider": tts.provider(settings),
+        "label": tts.label(settings),
         "missing": settings.missing_for("tts"),
-        "cached_lines": len(list(elevenlabs.cache_dir(settings).glob("*.mp3"))),
+        "cached_lines": len(list(tts.cache_dir(settings).glob("*.mp3"))),
     }

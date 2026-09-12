@@ -196,10 +196,25 @@ class Settings(BaseSettings):
     bridge_token: str = Field("", description="Shared secret between server and Mac bridge")
     bridge_stale_minutes: int = 15
 
-    # --- elevenlabs (the cloned voice) ---
-    # The browser never sees either of these. It asks this server to speak and
-    # the server holds the credential — a TTS key is billed per character and
-    # would be trivially scraped out of anything served to a phone.
+    # --- the cloned voice ---
+    # Two providers, one door (integrations/tts.py). The browser never sees any
+    # of these: it asks this server to speak and the server holds the
+    # credential — a TTS key is billed per character and would be trivially
+    # scraped out of anything served to a phone.
+    #
+    # "" picks whichever is configured, Fish first if both are. Set "fish" or
+    # "elevenlabs" to force one.
+    tts_provider: str = ""
+
+    # Fish Audio. The voice id is the model id of your cloned voice on
+    # fish.audio (the SDK calls it reference_id). s2-pro is the current model;
+    # s1 also works; speech-1.5/1.6 are deprecated upstream.
+    fish_api_key: str = Field("", description="Fish Audio API key; never sent to a browser")
+    fish_voice_id: str = Field("", description="Cloned voice id on fish.audio")
+    fish_model: str = "s2-pro"
+    fish_latency: str = "balanced"      # or "normal" for slightly better quality
+
+    # ElevenLabs.
     elevenlabs_api_key: str = Field("", description="ElevenLabs API key; never sent to a browser")
     elevenlabs_voice_id: str = Field("", description="The cloned voice to speak with")
     # Turbo is the low-latency model, which is the point of streaming at all.
@@ -330,10 +345,9 @@ class Settings(BaseSettings):
             "calendar_icloud": icloud_calendar,
             "messages": [("BRIDGE_TOKEN", self.bridge_token)],
             "agent": [("AGENT_SECRET", self.agent_secret)],
-            "tts": [
-                ("ELEVENLABS_API_KEY", self.elevenlabs_api_key),
-                ("ELEVENLABS_VOICE_ID", self.elevenlabs_voice_id),
-            ],
+            # Provider-aware: names the variables for whichever voice service
+            # is closest to working. See integrations/tts.py.
+            "tts": [(name, "") for name in _tts_missing(self)],
             # A boolean, not a credential — but it gates its tools the same way,
             # so the model is never offered a browser the image may not contain.
             "browser": [("BROWSER_ENABLED", self.browser_enabled)],
@@ -341,6 +355,12 @@ class Settings(BaseSettings):
             "auth": [("AUTH_SECRET", self.auth_secret), ("ACCESS_PASSWORD", self.access_password)],
         }
         return [name for name, value in needs.get(feature, []) if not value]
+
+
+def _tts_missing(settings: Settings) -> list[str]:
+    from .integrations.tts import missing
+
+    return missing(settings)
 
 
 @lru_cache

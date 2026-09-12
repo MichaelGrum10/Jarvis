@@ -139,7 +139,7 @@ MAX_WAKE_AUDIO = 4 * 1024 * 1024        # ~2 minutes of 16kHz mono; a sentence i
 async def handle_wake(message: dict) -> None:
     """Answer a wake-word utterance out loud on the Mac."""
     from ..config import get_settings
-    from ..integrations import elevenlabs
+    from ..integrations import tts
     from ..security import issue_speech_ticket
 
     settings = get_settings()
@@ -186,14 +186,14 @@ async def handle_wake(message: dict) -> None:
         log.warning("Wake-word turn failed: %s", exc, exc_info=True)
         reply = "I'm afraid something went wrong answering that, sir."
 
-    if not elevenlabs.configured(settings):
+    if not tts.configured(settings):
         # Without the cloned voice there is nothing to play — the Mac has no
         # speech engine of its own here, and `say` is not the voice you cloned.
-        log.info("Answered the wake word but ElevenLabs is not configured, so nothing was spoken")
+        log.info("Answered the wake word but no cloned voice is configured, so nothing was spoken")
         return
 
-    text = elevenlabs.speakable_length(reply)
-    key = elevenlabs.voice_key(text, settings)
+    text = tts.speakable_length(reply)
+    key = tts.voice_key(text, settings)
     from .voice import _pending, _sweep
 
     _sweep()

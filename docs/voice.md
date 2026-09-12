@@ -278,13 +278,31 @@ WebKit-specific, and both are unverified.
 
 ## The cloned voice
 
-`ELEVENLABS_API_KEY` and `ELEVENLABS_VOICE_ID` in `.env` turn on the cloned
-voice. Without them nothing breaks — Jarvis uses the browser's own voice and the
-status line says why.
+Two providers, one door. Set either pair in `.env` and Jarvis speaks in that
+voice; set neither and he uses the browser's own voice and says so in the status
+line.
 
-**The browser never talks to ElevenLabs.** It asks this server, and the server
-holds the key. That matters more than usual here: a TTS key is billed per
-character and would be trivially scraped out of anything served to a phone.
+| | Key | Voice id | Model |
+| --- | --- | --- | --- |
+| **Fish Audio** | `FISH_API_KEY` | `FISH_VOICE_ID` — your cloned voice's model id on fish.audio (the SDK calls it `reference_id`) | `FISH_MODEL`, default `s2-pro`; `s1` also current |
+| **ElevenLabs** | `ELEVENLABS_API_KEY` | `ELEVENLABS_VOICE_ID` | `ELEVENLABS_MODEL`, default `eleven_turbo_v2_5` |
+
+Fish is preferred when both are configured; `TTS_PROVIDER=fish` or
+`=elevenlabs` forces one. Forcing a provider that has no key does **not** fall
+through to the other — "I set ElevenLabs and it is still Fish" is the wrong
+surprise — it disables the cloned voice and doctor names what is missing.
+
+**The browser never talks to either service.** It asks this server, and the
+server holds the key. That matters more than usual here: a TTS key is billed
+per character and would be trivially scraped out of anything served to a phone.
+
+**Fish's request shape was taken from its own Python SDK**, not from memory: a
+msgpack body, the key as a Bearer token, and the model chosen by a `model`
+*header* — put it in the body and Fish silently uses its default. A test pins
+each of those.
+
+Switching provider, voice or model re-renders every line: the cache key carries
+all three, so a line ElevenLabs said is never played back as if Fish said it.
 
 ### How a line gets spoken
 
@@ -312,10 +330,11 @@ them again is money spent to receive the same bytes back. Written through a
 `.part` file and renamed, so a stream that dies halfway cannot leave a truncated
 clip to be served forever after.
 
-**Falling back.** A bad key, an exhausted quota, a network blip, a browser that
+**Falling back.** A bad key, exhausted credits, a network blip, a browser that
 refuses to play — all of them land on the browser's own voice, and all of them
-say why in the status line. A quota failure disables the cloned voice for the
-rest of the session rather than adding a doomed round trip to every sentence.
+say why in the status line. A credit or quota failure disables the cloned voice
+for the rest of the session rather than adding a doomed round trip to every
+sentence.
 
 ## Interrupting him
 
