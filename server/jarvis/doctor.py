@@ -441,7 +441,7 @@ def check_config(report: Report) -> None:
     if any(custom.values()) and not all(custom.values()):
         unset = [k for k, v in custom.items() if not v]
         report.bad(
-            "Custom endpoint", f"half configured — the pool is ignoring it",
+            "Custom endpoint", "half configured — the pool is ignoring it",
             f"Set the missing value(s): {', '.join(unset)}\n"
             "bash scripts/omniroute.sh   sets all three at once",
         )
@@ -508,15 +508,22 @@ def check_config(report: Report) -> None:
     # working assistant.
     from .agent import coder
 
-    if coder.available(settings):
-        report.ok("Improvement engine", coder.describe(settings))
-    elif mode != "off":
+    # Running on the free pool is a supported configuration, not a half-finished
+    # one, so it reports as fine. The only thing worth warning about is the
+    # endpoint that will actually be used being a poor fit for the job.
+    engine = coder.describe(settings)
+    if coder.available(settings) or mode == "off":
+        report.ok("Improvement engine", engine)
+    elif "tight per-minute budget" in engine:
         report.warn(
-            "Improvement engine", coder.describe(settings),
-            "An API key from console.anthropic.com puts Claude on the code instead:\n"
-            "bash scripts/setkey.sh ANTHROPIC_API_KEY sk-ant-… && docker compose up -d\n"
-            "(a claude.ai subscription is a different product and cannot be used here)",
+            "Improvement engine", engine,
+            "Editing code sends whole files; this endpoint meters a few thousand "
+            "tokens a minute, so cycles will stall and retry.\n"
+            "A roomier free provider fixes it — Gemini's free tier carries ~1M tokens:\n"
+            "bash scripts/setkey.sh GEMINI_API_KEY AIza… && docker compose up -d",
         )
+    else:
+        report.ok("Improvement engine", engine)
 
     # A merge is not a deploy: the server runs an image, so until something
     # rebuilds, a fix has landed in a file it is not executing.

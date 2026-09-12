@@ -234,6 +234,44 @@ class ClaudeCoder:
         )
 
 
+# Providers whose free tier meters tokens per *minute* tightly enough that one
+# file read can spend a whole minute's budget. Not a quality judgement — Groq is
+# the fastest thing here and the best choice for a chat turn. It is the wrong
+# shape for a turn that carries a 3000-line module.
+_TIGHT_BUDGET = frozenset({"groq"})
+
+
+def free_pool_order(settings: Settings | None = None) -> list[str]:
+    """Provider names, best-for-coding first, from IMPROVE_PROVIDER_ORDER."""
+    settings = settings or get_settings()
+    return [p.strip().lower() for p in settings.improve_provider_order.split(",") if p.strip()]
+
+
+def reorder_for_coding(pool, settings: Settings | None = None) -> None:
+    """Put the roomy endpoints first, in place.
+
+    The pool's usual order is tuned for chat: fastest first, which is right when
+    the request is a sentence. A coding turn re-sends the whole transcript plus
+    every file read so far, so what matters is context and a per-minute budget
+    big enough to carry it. Same endpoints, different question.
+    """
+    settings = settings or get_settings()
+    wanted = free_pool_order(settings)
+    if not wanted or not pool.endpoints:
+        return
+
+    def rank(endpoint) -> tuple[int, int]:
+        name = endpoint.label.split(":", 1)[0]
+        preferred = wanted.index(name) if name in wanted else len(wanted)
+        # Tight-budget providers go last rather than being dropped: when they
+        # are all you have, a slow cycle beats no cycle.
+        return preferred, 1 if name in _TIGHT_BUDGET else 0
+
+    # sorted() is stable, so endpoints of equal rank keep the order the pool
+    # built them in — a provider's own best-first ladder survives.
+    pool.endpoints = sorted(pool.endpoints, key=rank)
+
+
 def make_brain(settings: Settings | None = None):
     """The model that will do the editing: Claude when configured, else the pool.
 
@@ -245,20 +283,48 @@ def make_brain(settings: Settings | None = None):
         log.info("Autonomy running on %s", settings.anthropic_model)
         return ClaudeCoder(settings)
 
-    from ..llm.client import get_llm
+    # A separate client, not the shared one: reordering the pool in place would
+    # change which model answers your next question too.
+    from ..llm.client import GroqClient
 
-    log.info("Autonomy running on the free pool (set ANTHROPIC_API_KEY for Claude)")
-    return get_llm()
+    client = GroqClient(settings)
+    reorder_for_coding(client.pool, settings)
+    log.info(
+        "Autonomy running on the free pool, %s first",
+        client.pool.endpoints[0].label if len(client.pool) else "nothing configured",
+    )
+    return client
 
 
 def describe(settings: Settings | None = None) -> str:
-    """One line for doctor and the dashboard."""
+    """One line for doctor and the dashboard: what will actually do the editing."""
     settings = settings or get_settings()
     if available(settings):
         return f"Claude ({settings.anthropic_model}, effort {settings.anthropic_effort})"
     if settings.anthropic_api_key.strip():
         return "ANTHROPIC_API_KEY is set but the anthropic package is missing — using the free pool"
-    return "the free pool (no ANTHROPIC_API_KEY)"
+
+    # Name the endpoint rather than "the free pool", so the answer to "what is
+    # writing my code" is a model, not a category.
+    try:
+        from ..llm.pool import build_pool
+
+        pool = build_pool(settings)
+        reorder_for_coding(pool, settings)
+        if pool.endpoints:
+            first = pool.endpoints[0]
+            tight = first.label.split(":", 1)[0] in _TIGHT_BUDGET
+            return f"{first.label} (free{', tight per-minute budget' if tight else ''})"
+    except Exception:   # noqa: BLE001 — describing must never be the thing that fails
+        log.debug("Could not describe the free coding pool", exc_info=True)
+    return "the free pool"
 
 
-__all__ = ["ClaudeCoder", "available", "describe", "make_brain"]
+__all__ = [
+    "ClaudeCoder",
+    "available",
+    "describe",
+    "free_pool_order",
+    "make_brain",
+    "reorder_for_coding",
+]

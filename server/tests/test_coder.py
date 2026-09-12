@@ -106,12 +106,12 @@ def test_claude_is_used_when_a_key_is_set(claude):
 
 def test_without_a_key_it_falls_back_to_the_free_pool(claude, monkeypatch):
     """No key is a supported configuration, not an error — the engine still
-    runs, just less well."""
+    runs, on the pool, and says which endpoint it will use."""
     from jarvis.agent import coder
 
     monkeypatch.setattr(claude, "anthropic_api_key", "")
     assert coder.available(claude) is False
-    assert "free pool" in coder.describe(claude)
+    assert "Claude" not in coder.describe(claude)
 
     brain = coder.make_brain(claude)
     assert not isinstance(brain, coder.ClaudeCoder)
@@ -280,3 +280,85 @@ async def test_the_key_is_never_in_an_error_message(claude):
     with pytest.raises(LLMError) as caught:
         await coder.complete([{"role": "user", "content": "go"}], TOOLS)
     assert "sk-ant-test-never-leaves-here" not in str(caught.value)
+
+
+# ------------------------------------------------------- the no-key path
+#
+# Running without an Anthropic key is a supported configuration, not a
+# half-finished one. But the pool's usual order is tuned for chat, and a coding
+# turn is a different shape of request — so it gets reordered for the job.
+
+
+def _pool(*labels):
+    from jarvis.llm.pool import Endpoint, Pool
+
+    pool = Pool()
+    for label in labels:
+        provider, model = label.split(":", 1)
+        pool.endpoints.append(
+            Endpoint(model=model, api_key="k", base_url=f"https://{provider}", label=label)
+        )
+    return pool
+
+
+def test_roomy_providers_go_first_when_editing_code(claude, monkeypatch):
+    """Groq is the fastest endpoint here and the wrong one for this job: its
+    free tier meters ~8k tokens a minute and one read_file can exceed that."""
+    from jarvis.agent import coder
+
+    monkeypatch.setattr(claude, "improve_provider_order", "gemini,custom")
+    pool = _pool("groq:gpt-oss-120b", "custom:auto", "gemini:models/gemini-3.6-flash")
+    coder.reorder_for_coding(pool, claude)
+
+    assert [e.label.split(":", 1)[0] for e in pool.endpoints] == ["gemini", "custom", "groq"]
+
+
+def test_a_tight_provider_is_moved_back_not_dropped(claude, monkeypatch):
+    """When it is all you have, a slow cycle beats no cycle."""
+    from jarvis.agent import coder
+
+    monkeypatch.setattr(claude, "improve_provider_order", "gemini,custom")
+    pool = _pool("groq:gpt-oss-120b", "groq:llama-3.3-70b")
+    coder.reorder_for_coding(pool, claude)
+
+    assert len(pool.endpoints) == 2, "nothing is discarded"
+
+
+def test_a_providers_own_ladder_survives_the_reorder(claude, monkeypatch):
+    from jarvis.agent import coder
+
+    monkeypatch.setattr(claude, "improve_provider_order", "gemini")
+    pool = _pool("gemini:flash-a", "gemini:flash-b", "groq:x")
+    coder.reorder_for_coding(pool, claude)
+
+    assert [e.model for e in pool.endpoints if e.label.startswith("gemini")] == [
+        "flash-a",
+        "flash-b",
+    ]
+
+
+def test_the_free_brain_does_not_reorder_the_shared_chat_client(claude, monkeypatch):
+    """Reordering in place would change which model answers your next question."""
+    from jarvis.agent import coder
+    from jarvis.llm.client import get_llm
+
+    monkeypatch.setattr(claude, "anthropic_api_key", "")
+    shared = get_llm()
+    before = [e.label for e in shared.pool.endpoints]
+
+    brain = coder.make_brain(claude)
+
+    assert brain is not shared
+    assert [e.label for e in shared.pool.endpoints] == before
+
+
+def test_describe_names_the_endpoint_not_the_category(claude, monkeypatch):
+    """"What is writing my code" should answer with a model."""
+    from jarvis.agent import coder
+
+    monkeypatch.setattr(claude, "anthropic_api_key", "")
+    described = coder.describe(claude)
+
+    assert "Claude" not in described
+    # Either a real endpoint label, or the honest fallback when none is configured.
+    assert ":" in described or described == "the free pool"

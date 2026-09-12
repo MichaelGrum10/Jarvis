@@ -217,6 +217,15 @@ class Settings(BaseSettings):
     # hypothesis about a failure repays thinking; this is not a chat reply.
     anthropic_effort: str = "high"
 
+    # Which free providers to prefer when there is no Anthropic key and the
+    # pool does the editing. Deliberately different from PROVIDER_ORDER, which
+    # is tuned for chat: a chat turn is small and wants speed, while a coding
+    # turn reads whole source files and wants *context*. Groq is the fastest
+    # endpoint here and the worst at this — its free tier meters ~8k tokens a
+    # minute, and one read_file of a large module can exceed that on its own.
+    # Gemini Flash carries ~1M tokens, so it goes first.
+    improve_provider_order: str = "gemini,custom"
+
     # --- the cloned voice (Fish Audio) ---
     # The browser never sees any of these: it asks this server to speak and the
     # server holds the credential — a TTS key is billed per character and would

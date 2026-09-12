@@ -169,10 +169,33 @@ docker compose up -d
 
 `ANTHROPIC_MODEL` defaults to `claude-opus-5` and `ANTHROPIC_EFFORT` to `high`
 (reading unfamiliar code and forming a hypothesis about a failure is exactly the
-work that repays thinking). Without a key the engine runs on the free pool,
-which works and is worse. `python -m jarvis.doctor` says which is in play.
+work that repays thinking).
 
-**This is an API key from console.anthropic.com, billed per token.** A claude.ai
+### Without a key
+
+This is a supported configuration, not a half-finished one, and doctor reports
+it as fine rather than nagging. The engine runs on your free providers — but
+**not in the order the chat pool uses**, because it is a different shape of
+request. A chat turn is a sentence and wants speed; a coding turn re-sends the
+whole transcript plus every file read so far and wants room.
+
+That distinction has teeth. Groq is the fastest endpoint in the pool and the
+worst one for this: its free tier meters roughly 8,000 tokens a minute, and a
+single `read_file` of a large module can spend that on its own, so cycles stall
+and retry. Gemini's free tier carries ~1M tokens and sails through.
+
+```bash
+IMPROVE_PROVIDER_ORDER=gemini,custom   # roomy first; everything else follows
+```
+
+Providers not named keep their usual order behind the named ones, and a
+tight-budget one is moved to the back rather than dropped — when it is all you
+have, a slow cycle beats no cycle. `python -m jarvis.doctor` names the endpoint
+that will actually do the editing, and warns if it is one of the tight ones.
+
+If you would rather not add a key at all, nothing above is required — skip to
+the next section. **This is an API key from console.anthropic.com, billed per
+token.** A claude.ai
 subscription is a different product; its session token is not an API credential,
 it expires within hours, and using one this way is against Anthropic's terms.
 There is no way around that, and `agent/coder.py` says so in the same words
