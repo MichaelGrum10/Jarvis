@@ -66,6 +66,9 @@ fields |= {
     "COMPOSE_PROFILES",
     "OMNIROUTE_JWT_SECRET", "OMNIROUTE_API_KEY_SECRET",
     "OMNIROUTE_PASSWORD", "OMNIROUTE_WS_BRIDGE_SECRET",
+    # Read by `scripts/omniroute.sh seed` and handed to OmniRoute; Jarvis has
+    # no Anthropic adapter of its own, so this only matters through it.
+    "ANTHROPIC_API_KEY",
 }
 name = os.environ["NAME"]
 if not fields or name in fields:

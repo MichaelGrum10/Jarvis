@@ -135,8 +135,11 @@ seed() {
     exit 1
   fi
 
-  for pair in "groq:GROQ_API_KEY" "gemini:GEMINI_API_KEY" "openrouter:OPENROUTER_API_KEY" \
-              "cerebras:CEREBRAS_API_KEY" "mistral:MISTRAL_API_KEY" "together:TOGETHER_API_KEY"; do
+  # Left is OmniRoute's provider id, right is the .env name Jarvis reads. Both
+  # sides see the key: Jarvis's own pool directly, OmniRoute through here.
+  for pair in "groq:GROQ_API_KEY" "gemini:GEMINI_API_KEY" "mistral:MISTRAL_API_KEY" \
+              "nvidia:NVIDIA_API_KEY" "openrouter:OPENROUTER_API_KEY" "cerebras:CEREBRAS_API_KEY" \
+              "together:TOGETHER_API_KEY" "huggingface:HUGGINGFACE_API_KEY" "anthropic:ANTHROPIC_API_KEY"; do
     name="${pair%%:*}"; label="${pair##*:}"
     key="$(current "$label")"
     [ -n "$key" ] || continue
