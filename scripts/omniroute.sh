@@ -43,6 +43,21 @@ DEFAULT_MODEL="auto"
 current() { sed -n "s/^$1=//p" .env | tail -1 | sed "s/^'//; s/'$//"; }
 set_quiet() { bash scripts/setkey.sh "$1" "$2" >/dev/null; }
 
+# The cookie jar seed() logs in with. Global, cleaned up at exit: a RETURN trap
+# on a `local` fires after the local is gone, which under `set -u` is the
+# "jar: unbound variable" line this replaces.
+JAR=""
+trap '[ -n "$JAR" ] && rm -f "$JAR"' EXIT
+
+# The address the SSH tunnel should point at. `hostname -I` gives the VM's
+# private address, which is useless from a Mac; PUBLIC_URL's host is the name
+# that actually reaches this machine.
+server_name() {
+  local host
+  host="$(current PUBLIC_URL | sed -E 's#^https?://##; s#[/:].*$##')"
+  printf '%s' "${host:-<server>}"
+}
+
 # Interpolation of the compose file needs these even when the profile is off,
 # so they are written empty by nothing and generated here exactly once.
 ensure_secret() {
@@ -122,8 +137,7 @@ seed() {
   [ -n "$password" ] || fail "OMNIROUTE_PASSWORD is not set — run: bash scripts/omniroute.sh"
   wait_for_it || fail "OmniRoute is not answering on $HOST_URL — bash scripts/omniroute.sh logs"
 
-  jar="$(mktemp)"
-  trap 'rm -f "$jar"' RETURN
+  JAR="$(mktemp)"; jar="$JAR"
   body="$(PW="$password" python3 -c 'import json,os; print(json.dumps({"password": os.environ["PW"]}))')"
   result="$(curl -sS -m 15 -c "$jar" -X POST "$HOST_URL/api/auth/login" \
     -H 'Content-Type: application/json' -d "$body" 2>&1)" || fail "Could not log in to OmniRoute: $result"
@@ -208,7 +222,7 @@ install() {
   echo
   say "Next: open its dashboard, once, to connect free providers"
   note "It is on this machine's loopback only. From your Mac:"
-  printf "  ssh -N -L 20128:127.0.0.1:20128 %s@%s\n" "$(whoami)" "$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf "  ssh -N -L 20128:127.0.0.1:20128 %s@%s\n" "$(whoami)" "$(server_name)"
   note "then http://localhost:20128 in a browser, password as above."
   note "Its first-run wizard offers 'Set up free providers' — accept the ones you want."
   echo
