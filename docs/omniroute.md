@@ -85,7 +85,18 @@ decide whether this deployment is sound:
 - **Redis is optional.** Without one it says so once and rate-limits in memory.
   One process on one host does not need the shared store.
 - **A wrong bearer key is ignored, not rejected, while `REQUIRE_API_KEY` is
-  off.** The pool sends a placeholder; the loopback binding is the security.
+  off.** The install then replaces the placeholder with a real key it creates
+  through OmniRoute's API, named "Jarvis" in its dashboard, which is what makes
+  `REQUIRE_API_KEY=true` possible later. The loopback binding is the security
+  either way.
+- **`auto` will happily route to a paid model it has a key for.** The first
+  real benchmark hit exactly that: an OpenRouter key meant for `:free` models,
+  routed to OpenRouter's paid `auto`, answered 402. OmniRoute's `hidePaidModels`
+  setting removes anything not catalogued as free from every `auto/*` pool
+  before routing; the install turns it on (`freeonly`). Its stricter
+  `freeAccessPolicy: strict` mode is deliberately not used — by its own doc it
+  can empty the pool, since it admits only providers with a hand-curated
+  "no card can be attached" guarantee and a usage adapter.
 
 ### Measure it before trusting it
 
@@ -105,6 +116,8 @@ can be set with `bash scripts/omniroute.sh model …` if `auto` picks badly.
     bash scripts/omniroute.sh status     running? reachable? wired?
     bash scripts/omniroute.sh seed       re-hand it the keys in .env
     bash scripts/omniroute.sh free       add the keyless free providers (free all: every one)
+    bash scripts/omniroute.sh freeonly   keep auto off paid models (the 402 fix; freeonly off reverts)
+    bash scripts/omniroute.sh apikey     give Jarvis a real OmniRoute key instead of the placeholder
     bash scripts/omniroute.sh logs       its container log
     bash scripts/omniroute.sh off        stop and unwire; its data volume is kept
     bash scripts/omniroute.sh URL MODEL  an OmniRoute running somewhere else

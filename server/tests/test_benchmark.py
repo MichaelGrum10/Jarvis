@@ -480,3 +480,37 @@ def test_nothing_usable_means_no_order_rather_than_a_bad_one():
 
     assert rank_providers([{"label": "groq:x", "reachable": False, "error": "429"}]) == []
     assert rank_providers([]) == []
+
+
+def test_measured_models_become_each_providers_ladder():
+    """With --explore, rows for catalogue models carry the same `setting` as
+    the configured one; the passing ones, fastest first, are that provider's
+    ladder. A row that only passed the small test is not a candidate."""
+    from jarvis.benchmark import recommend_models
+
+    rows = [
+        {"label": "gemini:models/gemini-3.6-flash", "model": "models/gemini-3.6-flash", "setting": "GEMINI_MODEL",
+         "reachable": True, "tools_small": True, "tools_large": True, "large_latency": 2.0},
+        {"label": "gemini:models/gemini-3.7-flash", "model": "models/gemini-3.7-flash", "setting": "GEMINI_MODEL",
+         "reachable": True, "tools_small": True, "tools_large": True, "large_latency": 1.2, "candidate": True},
+        {"label": "gemini:models/gemini-3-pro", "model": "models/gemini-3-pro", "setting": "GEMINI_MODEL",
+         "reachable": True, "tools_small": True, "tools_large": False, "large_latency": 0.5, "candidate": True},
+        {"label": "groq:gpt-oss-120b", "model": "gpt-oss-120b", "setting": "GROQ_MODEL_LADDER",
+         "reachable": True, "tools_small": True, "tools_large": True, "large_latency": 0.4},
+        {"label": "custom:auto", "model": "auto", "setting": "CUSTOM_MODEL", "reachable": False, "error": "402"},
+    ]
+    assert recommend_models(rows) == {
+        "GEMINI_MODEL": ["models/gemini-3.7-flash", "models/gemini-3.6-flash"],
+        "GROQ_MODEL_LADDER": ["gpt-oss-120b"],
+    }
+
+
+def test_a_ladder_is_capped_so_a_huge_catalogue_does_not_become_the_setting():
+    from jarvis.benchmark import recommend_models
+
+    rows = [
+        {"label": f"custom:m{i}", "model": f"m{i}", "setting": "CUSTOM_MODEL",
+         "reachable": True, "tools_small": True, "tools_large": True, "large_latency": i}
+        for i in range(8)
+    ]
+    assert recommend_models(rows)["CUSTOM_MODEL"] == ["m0", "m1", "m2"]

@@ -260,14 +260,27 @@ bash scripts/bestmodels.sh weekly     # and keep doing it every Monday
 ```
 
 The benchmark already sends every configured provider the requests this
-assistant actually sends. This takes its answer — the providers that pass a
-full-size tool-calling turn first, fastest first, then the ones that manage only
-the small tool test, and nothing that failed — and writes it to
-`PROVIDER_ORDER`, which is the whole sequence rather than just who goes first.
-`weekly` adds one crontab line so the order tracks the free tiers as they
+assistant actually sends, and with `--explore N` it tries up to N more models
+from each provider's own catalogue the same way. This takes its answer and
+writes two kinds of setting:
+
+- `PROVIDER_ORDER` — the whole sequence of providers, best first: the ones that
+  pass a full-size tool-calling turn, fastest first, then the ones that manage
+  only the small tool test, and nothing that failed.
+- each provider's own ladder (`GEMINI_MODEL`, `GROQ_MODEL_LADDER`,
+  `CUSTOM_MODEL`, …) — the models that passed, fastest first, at most three.
+  A provider whose every model failed this run keeps its old setting rather
+  than being blanked.
+`weekly` adds one crontab line so the settings track the free tiers as they
 change, which they do: models are renamed, quotas cut, tiers withdrawn. A
 provider that fails a run is not deleted, only moved behind the ones that
-passed; it comes back the week it recovers.
+passed; it comes back the week it recovers. `BESTMODELS_EXPLORE` sets how many
+extra models to try per provider (default 3); more is slower and spends more of
+the free allowances on the measurement itself.
+
+The benchmark runs inside the container, so it measures with the code the
+container was built from — `bash scripts/update.sh` after a pull, or the script
+refuses to run rather than misread an older benchmark's output.
 
 Check the resulting order any time:
 

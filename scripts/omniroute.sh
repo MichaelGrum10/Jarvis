@@ -4,6 +4,8 @@
 #   bash scripts/omniroute.sh                 # install: start it here, wire it in
 #   bash scripts/omniroute.sh seed            # hand it the Groq/Gemini keys Jarvis already has
 #   bash scripts/omniroute.sh free            # add the keyless free providers (free all: every one)
+#   bash scripts/omniroute.sh freeonly        # keep its auto routing off paid models (freeonly off)
+#   bash scripts/omniroute.sh apikey          # give Jarvis a real OmniRoute key instead of the placeholder
 #   bash scripts/omniroute.sh status          # running? reachable? wired?
 #   bash scripts/omniroute.sh logs            # its container log
 #   bash scripts/omniroute.sh model auto/fast # change which of its models Jarvis asks for
@@ -180,6 +182,54 @@ seed() {
   return 0
 }
 
+# ---------------------------------------------------------------- apikey
+#
+# A real OmniRoute key for Jarvis, in place of the placeholder. Not needed for
+# it to work — REQUIRE_API_KEY is off and the socket is loopback-only — but a
+# real key shows up as "Jarvis" in its request logs and quota views, and is
+# what makes REQUIRE_API_KEY=true possible later without touching Jarvis.
+
+apikey() {
+  local result key
+  login
+  result="$(curl -sS -m 20 -b "$JAR" -X POST "$HOST_URL/api/keys" \
+    -H 'Content-Type: application/json' -d '{"name": "Jarvis"}' 2>&1)" || fail "Could not create a key: $result"
+  key="$(printf '%s' "$result" | python3 -c '
+import json, sys
+try:
+    print(json.load(sys.stdin).get("key", ""))
+except Exception:
+    print("")
+')"
+  if [ -z "$key" ]; then
+    warn "OmniRoute did not hand back a key; keeping the placeholder. It said: $(printf '%s' "$result" | head -c 200)"
+    return 1
+  fi
+  set_quiet CUSTOM_API_KEY "$key"
+  good "Jarvis now calls OmniRoute with its own key (named \"Jarvis\" in its dashboard)"
+}
+
+# --------------------------------------------------------------- freeonly
+#
+# Keep OmniRoute's `auto` off paid models. Its routing scores every connected
+# model, and a paid one it has a key for — OpenRouter's paid tier through a key
+# meant for :free models, say — answers 402 and wastes the turn. hidePaidModels
+# removes anything not catalogued as free from every auto/* pool before routing.
+
+freeonly() {
+  local flag="true" result
+  [ "${1:-}" = "off" ] && flag="false"
+  login
+  result="$(curl -sS -m 20 -b "$JAR" -X PATCH "$HOST_URL/api/settings" \
+    -H 'Content-Type: application/json' -d "{\"hidePaidModels\": $flag}" -o /dev/null -w '%{http_code}' 2>&1)" || true
+  case "$result" in
+    2*) [ "$flag" = "true" ] && good "auto now routes only across models catalogued as free" \
+                             || good "auto may route to paid models again" ;;
+    *) warn "Could not change OmniRoute's routing setting (HTTP $result)"
+       note "In its dashboard: Settings → routing → Hide paid models." ;;
+  esac
+}
+
 # ------------------------------------------------------------------- free
 #
 # The keyless providers — the ones that make `auto` answer with no account
@@ -287,12 +337,19 @@ install() {
   docker compose up -d >/dev/null 2>&1 || fail "docker compose up failed"
   good "Jarvis will fall back to OmniRoute ($(current CUSTOM_MODEL)) when its own providers are spent"
 
+  say "Giving Jarvis its own key there"
+  [ "$(current CUSTOM_API_KEY)" != "omniroute" ] && note "already has one" || apikey || true
+
+  say "Keeping auto off paid models"
+  freeonly || true
+
   say "Handing it the provider keys Jarvis already has"
   seed || true
 
   echo
   say "Adding the keyless free providers"
   free_providers || true
+  docker compose up -d >/dev/null 2>&1 || true
 
   echo
   say "Its dashboard, if you ever want it"
@@ -328,6 +385,8 @@ case "${1:-}" in
   status) status ;;
   seed) seed ;;
   free) free_providers "${2:-}" ;;
+  freeonly) freeonly "${2:-}" ;;
+  apikey) apikey && docker compose up -d >/dev/null 2>&1 ;;
   logs) docker compose logs --tail 80 omniroute ;;
   off) off ;;
   model)
@@ -353,5 +412,5 @@ case "${1:-}" in
     status || true
     ;;
   *)
-    fail "Unknown command: $1   (install | seed | free | status | logs | model NAME | off | URL MODEL [KEY])" ;;
+    fail "Unknown command: $1   (install | seed | free | freeonly | apikey | status | logs | model NAME | off | URL MODEL [KEY])" ;;
 esac

@@ -281,6 +281,28 @@ def rank_providers(rows: list[dict]) -> list[str]:
     return sorted(ranked, key=lambda name: best[name], reverse=True)
 
 
+def recommend_models(rows: list[dict], limit: int = 3) -> dict[str, list[str]]:
+    """Per model setting, the models that passed a full-size turn, fastest first.
+
+    Keyed by the .env setting that chooses the model (GEMINI_MODEL,
+    GROQ_MODEL_LADDER, CUSTOM_MODEL, …), because that is what gets written.
+    Every provider takes a comma list, and the pool tries it in order, so the
+    top few passing models become that provider's own ladder. A row that did
+    not pass the full-size turn is not a candidate at all: the small test is
+    not the job.
+    """
+    passing: dict[str, list[tuple[float, str]]] = {}
+    for row in rows:
+        setting, model = row.get("setting"), row.get("model")
+        if not (setting and model and row.get("tools_large")):
+            continue
+        speed = row.get("large_latency")
+        if speed is None:
+            speed = row.get("latency")
+        passing.setdefault(setting, []).append((float(99.0 if speed is None else speed), model))
+    return {s: [m for _, m in sorted(pairs)][:limit] for s, pairs in passing.items()}
+
+
 def verdict(row: dict) -> str:
     if not row.get("reachable"):
         error = row.get("error", "")
@@ -465,7 +487,7 @@ async def available_models(client: httpx.AsyncClient, pool) -> dict[str, set[str
     return found
 
 
-async def main() -> int:
+async def main(explore: int = 0) -> int:
     settings = get_settings()
     pool = build_pool(settings)
 
@@ -523,24 +545,51 @@ async def main() -> int:
     # Sequential on purpose: running these in parallel would have the providers
     # rate-limiting each other's measurements and produce nonsense.
     testable = [e for e in pool.endpoints if e not in missing]
+
+    async def measure(client, endpoint, candidate=False) -> dict:
+        print(f"{DIM}testing {endpoint.label}…{RESET}", flush=True)
+        try:
+            row = await benchmark_endpoint(client, endpoint)
+        except Exception as exc:
+            # One provider behaving unexpectedly must not discard the results
+            # for every other one. Losing a whole run to a single bad
+            # response is precisely what a crash here cost before.
+            row = {
+                "label": endpoint.label,
+                "model": endpoint.model,
+                "reachable": False,
+                "error": f"{type(exc).__name__}: {exc}"[:120],
+            }
+        row["setting"] = _setting_for(endpoint)
+        row["candidate"] = candidate
+        return row
+
     async with httpx.AsyncClient() as client:
-        rows = []
-        for endpoint in testable:
-            print(f"{DIM}testing {endpoint.label}…{RESET}", flush=True)
-            try:
-                rows.append(await benchmark_endpoint(client, endpoint))
-            except Exception as exc:
-                # One provider behaving unexpectedly must not discard the results
-                # for every other one. Losing a whole run to a single bad
-                # response is precisely what a crash here cost before.
-                rows.append(
-                    {
-                        "label": endpoint.label,
-                        "model": endpoint.model,
-                        "reachable": False,
-                        "error": f"{type(exc).__name__}: {exc}"[:120],
-                    }
-                )
+        rows = [await measure(client, endpoint) for endpoint in testable]
+
+        # "Test more": the configured model is one guess per provider. With
+        # --explore, the provider's own catalogue supplies a few more, ordered
+        # by what has worked here before, and each is measured the same way.
+        # What passes becomes that provider's ladder — see recommend_models.
+        if explore > 0:
+            from .llm.pool import Endpoint
+
+            print(f"\n{BOLD}Trying up to {explore} more models per provider…{RESET}")
+            seen = {(e.base_url, normalise_model_id(e.model)) for e in pool.endpoints}
+            for base_url, models in catalogue.items():
+                anchor = next((e for e in testable if e.base_url == base_url), None)
+                if anchor is None or not models:
+                    continue
+                candidates = [
+                    m for m in _candidate_models(models, anchor.model)
+                    if (base_url, normalise_model_id(m)) not in seen
+                ][:explore]
+                for model in candidates:
+                    trial = Endpoint(
+                        model=model, api_key=anchor.api_key, base_url=base_url,
+                        label=f"{anchor.label.split(':', 1)[0]}:{model}",
+                    )
+                    rows.append(await measure(client, trial, candidate=True))
 
     print(f"\n{BOLD}{'endpoint':<44}{'latency':>9}{'tools':>8}{'@full':>8}  verdict{RESET}")
     print("─" * 88)
@@ -548,7 +597,8 @@ async def main() -> int:
         latency = f"{row['latency']:.2f}s" if row.get("latency") else "—"
         small = f"{GREEN}✓{RESET}" if row.get("tools_small") else f"{RED}✗{RESET}"
         large = f"{GREEN}✓{RESET}" if row.get("tools_large") else f"{RED}✗{RESET}"
-        print(f"{row['label']:<44}{latency:>9}{small:>16}{large:>16}  {verdict(row)}")
+        label = row["label"] + (" +" if row.get("candidate") else "")
+        print(f"{label:<44}{latency:>9}{small:>16}{large:>16}  {verdict(row)}")
         for key in ("error", "tools_small_why", "tools_large_why"):
             value = row.get(key)
             if value and value != "correct":
@@ -565,6 +615,8 @@ async def main() -> int:
     # scripts/bestmodels.sh reads the last line and applies it.
     order = rank_providers(rows)
     current = [n.strip() for n in settings.provider_order.split(",") if n.strip()]
+    if any(r.get("candidate") for r in rows):
+        print(f"{DIM}  + a model from the provider's catalogue, not yet in .env{RESET}")
     if order:
         print(f"\n{BOLD}Measured order, best first:{RESET} {', '.join(order)}")
         if current == order:
@@ -575,6 +627,15 @@ async def main() -> int:
             print(f"{DIM}or by hand:  bash scripts/setkey.sh PROVIDER_ORDER {','.join(order)} "
                   f"&& docker compose up -d{RESET}")
         print(f"RECOMMENDED_ORDER={','.join(order)}")
+    # Per provider, the models that passed, fastest first — the provider's
+    # own ladder. Same machine-readable form; scripts/bestmodels.sh applies
+    # every RECOMMENDED_ line it finds.
+    for setting, models in recommend_models(rows).items():
+        have = [m.strip() for m in str(getattr(settings, setting.lower(), "") or "").split(",") if m.strip()]
+        if models != have:
+            print(f"{BOLD}{setting}{RESET} {DIM}measured:{RESET} {', '.join(models)}"
+                  + (f"  {DIM}(now: {', '.join(have) or 'unset'}){RESET}" if have != models else ""))
+        print(f"RECOMMENDED_{setting}={','.join(models)}")
 
     # An endpoint that failed for a reason a different model would fix. A rate
     # limit is excluded — that one is about timing, and swapping models to dodge
@@ -658,6 +719,12 @@ async def main() -> int:
 
 
 if __name__ == "__main__":
+    import argparse
     import sys
 
-    sys.exit(asyncio.run(main()))
+    parser = argparse.ArgumentParser(description="Measure the configured providers against each other.")
+    parser.add_argument(
+        "--explore", type=int, default=0, metavar="N",
+        help="also try up to N more models per provider, from its own catalogue (default 0)",
+    )
+    sys.exit(asyncio.run(main(explore=max(0, parser.parse_args().explore))))
