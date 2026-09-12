@@ -20,6 +20,7 @@ import datetime as dt
 import hashlib
 import logging
 import re
+from collections.abc import Callable
 
 from sqlalchemy import func, select
 
@@ -59,6 +60,19 @@ def fingerprint(kind: str, detail: str) -> str:
     return hashlib.sha256(f"{kind}|{normalised}".encode()).hexdigest()[:16]
 
 
+# Called after each recorded failure, so the improvement engine can look at a
+# problem while it is still happening rather than at the next scheduled tick.
+# A list of callbacks rather than a direct import, because telemetry is imported
+# by nearly everything and must not depend on the engine that reads it.
+_watchers: list[Callable[[], None]] = []
+
+
+def on_failure(callback: Callable[[], None]) -> None:
+    """Register a nudge. Idempotent, so a restarted loop doesn't stack them."""
+    if callback not in _watchers:
+        _watchers.append(callback)
+
+
 async def record_failure(
     kind: str,
     detail: str,
@@ -80,6 +94,14 @@ async def record_failure(
             )
     except Exception:
         log.exception("Could not record telemetry (continuing)")
+
+    for watcher in _watchers:
+        try:
+            watcher()
+        except Exception:
+            # Same rule as above: the thing that watches failures must not
+            # become one. A broken watcher is logged and ignored.
+            log.exception("A failure watcher raised (continuing)")
 
 
 async def record_if_refusal(request: str, reply: str) -> None:

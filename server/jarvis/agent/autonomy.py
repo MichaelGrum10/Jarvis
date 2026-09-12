@@ -251,6 +251,14 @@ class AutonomyEngine:
     async def run(self, goal: str, on_log=None) -> AutonomyResult:
         result = AutonomyResult()
 
+        # Claude when a key is configured, the free pool otherwise. Built per
+        # run, not per engine: a coder carries one run's transcript. See
+        # coder.py for why editing source deserves a different model from
+        # answering "what's on my calendar".
+        from .coder import make_brain
+
+        brain = make_brain(self.settings)
+
         if not self.settings.autonomy_enabled:
             result.summary = (
                 "Autonomous mode is off. Set AUTONOMY_ENABLED=true in .env to let Jarvis "
@@ -306,7 +314,7 @@ class AutonomyEngine:
         for step in range(1, self.settings.autonomy_max_iterations + 1):
             result.steps = step
             try:
-                response = await self.llm.complete(messages, TOOLS, temperature=0.1)
+                response = await brain.complete(messages, TOOLS, temperature=0.1)
             except LLMError as exc:
                 result.summary = f"Model error: {exc}"
                 emit(result.summary)

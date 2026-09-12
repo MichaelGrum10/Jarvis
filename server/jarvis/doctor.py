@@ -503,6 +503,34 @@ def check_config(report: Report) -> None:
             "IMPROVE_MODE must be one of: off, propose, apply",
         )
 
+    # Which model writes the fixes. The free pool can do it; Claude does it
+    # markedly better, and this is the one place where a wrong edit costs you a
+    # working assistant.
+    from .agent import coder
+
+    if coder.available(settings):
+        report.ok("Improvement engine", coder.describe(settings))
+    elif mode != "off":
+        report.warn(
+            "Improvement engine", coder.describe(settings),
+            "An API key from console.anthropic.com puts Claude on the code instead:\n"
+            "bash scripts/setkey.sh ANTHROPIC_API_KEY sk-ant-… && docker compose up -d\n"
+            "(a claude.ai subscription is a different product and cannot be used here)",
+        )
+
+    # A merge is not a deploy: the server runs an image, so until something
+    # rebuilds, a fix has landed in a file it is not executing.
+    if mode == "apply":
+        marker = settings.data_dir / "deployed.commit"
+        if marker.is_file():
+            report.ok("Auto-deploy", f"last shipped {marker.read_text().strip()[:7]}")
+        else:
+            report.bad(
+                "Auto-deploy", "nothing has ever been deployed automatically",
+                "IMPROVE_MODE=apply merges, but only this ships it:\n"
+                "bash scripts/autodeploy.sh watch",
+            )
+
     # Setting the mode is only one of three things this needs. With the others
     # missing the loop still starts and still fails every cycle, in a log nobody
     # is watching — so report every blocker, not just the first.

@@ -33,6 +33,9 @@ dependencies = [
     "argon2-cffi>=23.1",
     "cryptography>=43.0",
     "ormsgpack>=1.5",
+    # Claude writes this project's own fixes when ANTHROPIC_API_KEY is set.
+    # Optional at runtime: agent/coder.py falls back to the free pool without it.
+    "anthropic>=1.0",
 ]
 
 [project.optional-dependencies]

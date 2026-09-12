@@ -8,14 +8,14 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=24';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=24';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=24';
-import { initPanels, resetLayout } from '/static/panels.js?v=24';
-import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned, unlockAudio } from '/static/speech.js?v=24';
-import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=24';
+import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=25';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=25';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=25';
+import { initPanels, resetLayout } from '/static/panels.js?v=25';
+import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned, unlockAudio } from '/static/speech.js?v=25';
+import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=25';
 import { initReactor, reactorAnalyse, reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
-  from '/static/reactor.js?v=24';
+  from '/static/reactor.js?v=25';
 
 const API = '';
 const store = {
@@ -612,13 +612,37 @@ async function showStatus() {
   }
 }
 
-function showAutonomy() {
+async function showAutonomy() {
   closeDrawer();
+  showModal('Self-improve', '<p class="muted">Checking…</p>');
+
+  let health = {};
+  try {
+    health = await api('/api/autonomy/health');
+  } catch { /* shown as unknown below */ }
+
+  // What happens to a request depends entirely on the mode, and guessing wrong
+  // is the difference between "it shipped overnight" and "it sat on a branch".
+  const shipping = health.mode === 'apply';
+  const outcome = shipping
+    ? 'It writes the change on a branch, runs the tests, and if they pass it merges, rebuilds and restarts itself. If the server stops answering it rolls back on its own.'
+    : health.mode === 'propose'
+      ? 'It writes the change on a branch and runs the tests, then tells you. Nothing merges until you say so.'
+      : 'Self-improvement is currently off, so nothing would pick this up.';
+
+  const blockers = (health.blockers || []).map((b) =>
+    `<div class="row"><div class="r-main"><div class="r-title">${esc(b.what)}</div>
+     <div class="r-sub"><code>${esc(b.fix)}</code></div></div></div>`).join('');
+
   showModal('Self-improve', `
-    <p class="muted">Describe what Jarvis should build or fix in its own code. It works on a
-    throwaway git branch, runs the tests, and hands you a diff to review. Nothing merges automatically.</p>
+    <p class="muted">Ask for a feature, or describe something that's broken. ${esc(outcome)}</p>
     <textarea id="auto-goal" placeholder="e.g. Add a weather tool using the free Open-Meteo API, with tests."></textarea>
-    <button id="auto-run">Start run</button>
+    <button id="auto-run">${shipping ? 'Build and ship it' : 'Build it'}</button>
+    <div class="row"><div class="r-main"><div class="r-title">Writing the code</div></div>
+      <div class="r-val">${esc(health.brain || 'unknown')}</div></div>
+    <div class="row"><div class="r-main"><div class="r-title">Mode</div></div>
+      <div class="r-val ${shipping ? 'up' : ''}">${esc(health.mode || '?')}${health.queued_requests ? ` · ${health.queued_requests} queued` : ''}</div></div>
+    ${blockers ? `<div class="card"><h4>Stopping it from running</h4>${blockers}</div>` : ''}
     <div id="auto-out"></div>`);
   $('auto-run').onclick = startAutonomy;
   loadRuns();
@@ -628,10 +652,18 @@ async function startAutonomy() {
   const goal = $('auto-goal').value.trim();
   if (goal.length < 8) return;
   const out = $('auto-out');
-  out.innerHTML = '<p class="muted">Starting…</p>';
+  out.innerHTML = '<p class="muted">Queueing…</p>';
   try {
-    const { run_id } = await api('/api/autonomy/run', { method: 'POST', body: JSON.stringify({ goal }) });
-    pollRun(run_id);
+    // /request, not /run: it goes through the improvement loop, so it gets the
+    // same test gate and the same deploy-and-roll-back path as everything else,
+    // and only one change is ever in flight at a time.
+    const res = await api('/api/autonomy/request', {
+      method: 'POST', body: JSON.stringify({ goal }),
+    });
+    $('auto-goal').value = '';
+    out.innerHTML = `<p class="muted">Queued as run #${res.run_id}. This takes minutes —
+      you can close this.${res.will_deploy ? ' It will deploy itself if the tests pass.' : ''}</p>`;
+    pollRun(res.run_id);
   } catch (err) {
     out.innerHTML = `<p class="error">${esc(err.message)}</p>`;
   }
@@ -646,7 +678,9 @@ async function pollRun(id) {
         ${run.branch ? `<div class="r-sub">branch: <code>${esc(run.branch)}</code></div>` : ''}
         <pre class="run-log">${esc(run.log || 'working…')}</pre>
         ${run.result ? `<pre class="run-log">${esc(run.result.slice(0, 4000))}</pre>` : ''}</div>`;
-      if (run.status === 'queued' || run.status === 'running') setTimeout(tick, 2500);
+      // 'queued' can last minutes — it waits for the loop to settle — so keep
+      // polling rather than going quiet as if nothing happened.
+      if (run.status === 'queued' || run.status === 'running') setTimeout(tick, 4000);
     } catch (err) {
       out.innerHTML = `<p class="error">${esc(err.message)}</p>`;
     }

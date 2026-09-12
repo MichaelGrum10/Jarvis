@@ -44,7 +44,9 @@ from .autonomy import get_engine
 log = logging.getLogger(__name__)
 
 # An issue seen once might be a fluke — a provider hiccup, a one-off network
-# blip. Requiring repetition keeps the engine on real problems.
+# blip. Requiring repetition keeps the engine on real problems. Overridable as
+# IMPROVE_MIN_OCCURRENCES, because how twitchy this should be depends on how
+# much you trust it to deploy on its own.
 MIN_OCCURRENCES = 3
 
 
@@ -94,6 +96,22 @@ class SelfImprover:
         self.settings = settings or get_settings()
         self._task: asyncio.Task | None = None
         self._running = False
+        # Set when something wants attention now: a failure was just recorded,
+        # or you asked for a feature. Without it the engine waits out the full
+        # interval, so a bug found at 9am is looked at after lunch.
+        self._wake = asyncio.Event()
+        # Deliberately not named _loop: that is the coroutine below, and an
+        # attribute of the same name would shadow it into a TypeError at start.
+        self._owner_loop: asyncio.AbstractEventLoop | None = None
+
+    def nudge(self) -> None:
+        """Ask for a cycle soon. Safe from any thread and from sync code."""
+        loop, waiter = self._owner_loop, self._wake
+        if loop is None or loop.is_closed():
+            return
+        # set() is not thread-safe and record_failure can be called from a
+        # worker thread, so it is scheduled onto the loop that owns the Event.
+        loop.call_soon_threadsafe(waiter.set)
 
     # ---------------------------------------------------------------- loop
 
@@ -103,6 +121,12 @@ class SelfImprover:
             return
         if self._task and not self._task.done():
             return
+
+        self._owner_loop = asyncio.get_running_loop()
+        # Watch failures as they are recorded rather than polling for them.
+        from ..telemetry import on_failure
+
+        on_failure(self.nudge)
 
         # Started anyway when something else is missing — the loop reports the
         # blockers through /api/autonomy/health, and refusing to start would
@@ -140,12 +164,49 @@ class SelfImprover:
                 raise
             except Exception:
                 log.exception("Self-improvement cycle failed")
-            await asyncio.sleep(self.settings.improve_interval_hours * 3600)
+
+            # Whichever comes first: the scheduled tick, or something asking for
+            # attention. A nudge then settles before acting — errors arrive in
+            # bursts, and the first line of a burst is rarely the whole story.
+            self._wake.clear()
+            try:
+                await asyncio.wait_for(
+                    self._wake.wait(), timeout=self.settings.improve_interval_hours * 3600
+                )
+            except TimeoutError:
+                continue
+            log.info("Self-improvement woken early; settling before looking")
+            await asyncio.sleep(self.settings.improve_settle_seconds)
 
     # ---------------------------------------------------------------- cycle
 
+    async def next_request(self) -> tuple[int, str] | None:
+        """The oldest feature you have asked for and not yet been given.
+
+        Returns (run_id, goal). These outrank telemetry: a person asking for
+        something is a stronger signal than a counter crossing a threshold, and
+        waiting behind a bug queue is not what "add this feature" means.
+        """
+        from sqlalchemy import select
+
+        async with session_scope() as session:
+            row = (
+                await session.execute(
+                    select(AutonomyRun)
+                    .where(AutonomyRun.status == "queued")
+                    .order_by(AutonomyRun.created_at)
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                return None
+            # Claimed inside the same transaction, so a manual /improve-now
+            # racing the loop cannot start the same request twice.
+            row.status = "running"
+            return row.id, row.goal
+
     async def pick_goal(self) -> tuple[str, str] | None:
-        """The highest-value thing to work on, or None if nothing qualifies.
+        """The highest-value failure to work on, or None if nothing qualifies.
 
         Returns (fingerprint, goal). Doing nothing is a perfectly good outcome —
         an engine that always finds something to change will change things that
@@ -153,7 +214,7 @@ class SelfImprover:
         """
         issues = await top_issues(days=self.settings.improve_lookback_days, limit=5)
         for issue in issues:
-            if issue["count"] < MIN_OCCURRENCES:
+            if issue["count"] < self.settings.improve_min_occurrences:
                 continue
             goal = (
                 "Something in this assistant is failing repeatedly in real use. "
@@ -170,19 +231,27 @@ class SelfImprover:
         if self.settings.improve_mode == "off":
             return {"status": "disabled"}
 
-        picked = await self.pick_goal()
-        if picked is None:
-            log.info("Self-improvement: nothing recurring enough to act on")
-            return {"status": "idle", "reason": "no recurring issues"}
+        # What you asked for first, then what keeps breaking.
+        fingerprint = ""
+        requested = await self.next_request()
+        if requested is not None:
+            run_id, goal = requested
+        else:
+            picked = await self.pick_goal()
+            if picked is None:
+                log.info("Self-improvement: nothing recurring enough to act on")
+                return {"status": "idle", "reason": "no recurring issues"}
+            fingerprint, goal = picked
+            run_id = 0
 
-        fingerprint, goal = picked
         log.info("Self-improvement working on: %s", goal.splitlines()[0])
 
-        async with session_scope() as session:
-            run = AutonomyRun(goal=goal, status="running")
-            session.add(run)
-            await session.flush()
-            run_id = run.id
+        if not run_id:
+            async with session_scope() as session:
+                run = AutonomyRun(goal=goal, status="running")
+                session.add(run)
+                await session.flush()
+                run_id = run.id
 
         lines: list[str] = []
         result = await get_engine().run(goal, on_log=lines.append)
@@ -202,7 +271,7 @@ class SelfImprover:
         if result.success and result.files_changed and self.settings.improve_mode == "apply":
             outcome["applied"] = await self._apply(result.branch, lines.append)
 
-        if result.success:
+        if result.success and fingerprint:
             await mark_resolved(fingerprint)
 
         async with session_scope() as session:

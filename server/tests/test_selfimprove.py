@@ -209,3 +209,107 @@ def test_a_checkout_without_git_is_a_blocker(tmp_path):
     )
 
     assert any("git" in b["what"] for b in blockers(settings))
+
+
+# ------------------------------------------------- asking for things by name
+#
+# Two paths lead into the engine now: something broke, or you asked. They are
+# deliberately not equal in priority.
+
+
+async def test_a_request_you_made_outranks_a_bug_that_keeps_happening():
+    """A person asking is a stronger signal than a counter crossing a
+    threshold, and waiting behind a bug queue is not what "add this" means."""
+    from jarvis.agent.selfimprove import get_improver
+    from jarvis.db import AutonomyRun, session_scope
+
+    async with session_scope() as session:
+        session.add(AutonomyRun(goal="add a parcel tracker", status="queued"))
+
+    picked = await get_improver().next_request()
+    assert picked is not None
+    run_id, goal = picked
+    assert "parcel tracker" in goal
+
+    # Claimed, so a manual cycle racing the loop cannot start it twice.
+    assert await get_improver().next_request() is None
+
+    async with session_scope() as session:
+        assert (await session.get(AutonomyRun, run_id)).status == "running"
+
+
+async def test_requests_are_taken_oldest_first():
+    from jarvis.agent.selfimprove import get_improver
+    from jarvis.db import AutonomyRun, session_scope
+
+    async with session_scope() as session:
+        session.add(AutonomyRun(goal="first thing", status="queued"))
+    async with session_scope() as session:
+        session.add(AutonomyRun(goal="second thing", status="queued"))
+
+    _, first = await get_improver().next_request()
+    _, second = await get_improver().next_request()
+    assert "first thing" in first
+    assert "second thing" in second
+
+
+async def test_nothing_queued_is_not_an_error():
+    from jarvis.agent.selfimprove import get_improver
+
+    assert await get_improver().next_request() is None
+
+
+async def test_a_recorded_failure_wakes_the_loop():
+    """Otherwise a bug found at nine in the morning gets looked at after lunch."""
+    import asyncio
+
+    from jarvis.agent.selfimprove import SelfImprover
+    from jarvis.telemetry import _watchers, on_failure, record_failure
+
+    improver = SelfImprover()
+    improver._owner_loop = asyncio.get_running_loop()
+    on_failure(improver.nudge)
+    try:
+        assert not improver._wake.is_set()
+        await record_failure("tool_error", "calendar_list blew up again")
+        # call_soon_threadsafe lands on the next loop pass.
+        await asyncio.sleep(0)
+        assert improver._wake.is_set(), "a failure should ask for attention"
+    finally:
+        _watchers.remove(improver.nudge)
+
+
+async def test_the_nudge_is_safe_before_the_loop_is_running():
+    """record_failure runs everywhere, including at import time and from worker
+    threads. A nudge with no loop yet must be a no-op, not a crash."""
+    from jarvis.agent.selfimprove import SelfImprover
+
+    SelfImprover().nudge()   # no loop bound; must not raise
+
+
+async def test_a_broken_watcher_cannot_break_telemetry():
+    """The thing that watches failures must not become one."""
+    from jarvis.telemetry import _watchers, on_failure, record_failure
+
+    def explode():
+        raise RuntimeError("watcher is broken")
+
+    on_failure(explode)
+    try:
+        await record_failure("tool_error", "something ordinary")
+    finally:
+        _watchers.remove(explode)
+
+
+def test_registering_the_same_watcher_twice_does_not_stack_it():
+    from jarvis.telemetry import _watchers, on_failure
+
+    def watcher():
+        pass
+
+    on_failure(watcher)
+    on_failure(watcher)
+    try:
+        assert _watchers.count(watcher) == 1
+    finally:
+        _watchers.remove(watcher)

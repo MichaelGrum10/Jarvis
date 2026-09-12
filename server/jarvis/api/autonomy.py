@@ -80,6 +80,76 @@ async def start_run(
     return {"run_id": run_id, "status": "queued"}
 
 
+async def _queued_count() -> int:
+    """Feature requests waiting for the loop to reach them."""
+    from sqlalchemy import func
+
+    async with session_scope() as session:
+        return int(
+            (
+                await session.execute(
+                    select(func.count())
+                    .select_from(AutonomyRun)
+                    .where(AutonomyRun.status == "queued")
+                )
+            ).scalar_one()
+        )
+
+
+@router.post("/request")
+async def request_feature(
+    body: RunRequest, device: CurrentDevice, settings: Settings = Depends(get_settings)
+):
+    """Ask for a feature. It gets built, tested, and — in apply mode — shipped.
+
+    Deliberately queued rather than started here, unlike /run. Going through the
+    improvement loop means one change at a time, the same test gate everything
+    else passes, and the same deploy-and-roll-back path. Two engines editing the
+    same checkout at once is how you get a merge conflict with yourself.
+    """
+    if not settings.autonomy_enabled:
+        raise HTTPException(
+            403,
+            "Autonomous mode is disabled. Set AUTONOMY_ENABLED=true in .env and restart to "
+            "let Jarvis modify its own code.",
+        )
+    if settings.improve_mode == "off":
+        raise HTTPException(
+            403,
+            "Self-improvement is off, so nothing would pick this up. "
+            "Set IMPROVE_MODE=propose (or apply) and restart.",
+        )
+
+    goal = (
+        "The owner of this assistant asked for this, in their own words:\n\n"
+        f"{body.goal.strip()}\n\n"
+        "Build it properly and in keeping with the surrounding code: read the "
+        "existing patterns first, put it where a similar feature already lives, "
+        "and add tests that cover it. If the request is ambiguous, implement the "
+        "smallest reasonable reading of it and say in your summary what you "
+        "assumed. If it cannot be done safely, finish with success=false and "
+        "explain why rather than half-building it."
+    )
+
+    async with session_scope() as session:
+        row = AutonomyRun(goal=goal, status="queued")
+        session.add(row)
+        await session.flush()
+        run_id = row.id
+
+    # Wake the loop rather than waiting out the interval.
+    from ..agent.selfimprove import get_improver
+
+    get_improver().nudge()
+
+    return {
+        "run_id": run_id,
+        "status": "queued",
+        "mode": settings.improve_mode,
+        "will_deploy": settings.improve_mode == "apply",
+    }
+
+
 @router.get("/health")
 async def improvement_health(device: CurrentDevice, days: int = 7):
     """What has actually been going wrong, and what the engine would work on next.
@@ -95,9 +165,14 @@ async def improvement_health(device: CurrentDevice, days: int = 7):
     picked = await get_improver().pick_goal()
     stopped_by = blockers(settings)
 
+    from ..agent import coder
+
     return {
         "mode": settings.improve_mode,
         "interval_hours": settings.improve_interval_hours,
+        # Which model does the editing. "Claude (...)" or "the free pool".
+        "brain": coder.describe(settings),
+        "queued_requests": await _queued_count(),
         # Empty means it will actually run. Non-empty is the whole answer to
         # "why is this still disabled" — each entry carries its own fix.
         "ready": not stopped_by,

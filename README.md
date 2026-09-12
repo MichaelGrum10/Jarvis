@@ -239,6 +239,13 @@ works**, bright while speaking, with the arc reactor in the middle tracking his
 voice. Jarvis speaks in your cloned Fish Audio voice when it is configured, and
 in the closest British voice the device has when it is not — and says which.
 
+**It fixes itself, and builds what you ask for.** Say "add a tool that tracks
+parcels" and it writes the code on a branch, runs the tests, and — in `apply`
+mode — merges, rebuilds and restarts, rolling back automatically if the server
+stops answering. Recurring bugs get the same treatment without being asked. With
+an Anthropic API key the code is written by Claude; without one, by the free
+pool. See `docs/self-improvement.md`.
+
 **The best free models, measured.** `bash scripts/bestmodels.sh` benchmarks
 every provider you have on the requests Jarvis actually sends and puts the ones
 that pass a full-size tool-calling turn first; `weekly` keeps that order true as

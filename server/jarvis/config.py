@@ -203,6 +203,20 @@ class Settings(BaseSettings):
     bridge_token: str = Field("", description="Shared secret between server and Mac bridge")
     bridge_stale_minutes: int = 15
 
+    # --- Claude, as the engine that writes this code ---
+    # Only the autonomy engine uses this: fixing what breaks and building what
+    # you ask for. Ordinary conversation stays on the free pool above, which is
+    # both cheaper and quite good enough at dispatching tools.
+    #
+    # This is an API key from console.anthropic.com. A claude.ai subscription is
+    # a different product and its session token is not an API credential — see
+    # agent/coder.py. Without a key the engine falls back to the free pool.
+    anthropic_api_key: str = Field("", description="Anthropic API key; used only for self-improvement")
+    anthropic_model: str = "claude-opus-5"
+    # low | medium | high | xhigh | max. Reading unfamiliar code and forming a
+    # hypothesis about a failure repays thinking; this is not a chat reply.
+    anthropic_effort: str = "high"
+
     # --- the cloned voice (Fish Audio) ---
     # The browser never sees any of these: it asks this server to speak and the
     # server holds the credential — a TTS key is billed per character and would
@@ -291,6 +305,13 @@ class Settings(BaseSettings):
     # Don't start work the instant the process boots; it may have just restarted
     # because of the previous cycle, and settling first avoids a restart loop.
     improve_startup_delay_seconds: int = 300
+    # A failure, or a feature you asked for, wakes the loop instead of waiting
+    # out the interval — then it settles, because errors arrive in bursts and
+    # the first line of a burst is rarely the whole story.
+    improve_settle_seconds: int = 120
+    # How many times a thing must break before it is worth fixing. One
+    # occurrence is often a provider hiccup; three is a bug.
+    improve_min_occurrences: int = 3
 
     # --- autonomy ---
     autonomy_enabled: bool = False
