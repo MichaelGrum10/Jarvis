@@ -107,9 +107,10 @@ Mishearings are tolerated, because short names get mangled constantly: "Travis",
 every false trigger opens the microphone and spends transcription quota, so
 "marvellous" and "service" do not.
 
-The wake word only listens while voice mode is open and the app is in the
-foreground. Browsers can't run an always-on listener in the background, so this
-isn't a smart speaker.
+In the browser the wake word only works on Chrome, on the desktop, while the app
+is in the foreground — and not at all on Safari or on any iOS browser, which
+require a fresh tap for every listen. The always-on wake word lives on the Mac
+agent instead ([voice.md](voice.md)); this isn't a smart speaker in a phone.
 
 To enforce it server-side as well:
 
@@ -123,7 +124,7 @@ Then anything transcribed without a wake word near the start is ignored.
 
 ## Enrolling your voice
 
-Open voice mode → **Enrol voice**. You'll read three short phrases.
+Tap **Enrol voice** under the ring. You'll read three short phrases.
 
 Three separate recordings matter more than they sound: one captures a single
 posture, distance and moment. Several average that out, and the spread between
@@ -170,7 +171,7 @@ Review them:
 curl https://your-domain/api/identity/alerts -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
-The app shows a banner for unacknowledged alerts when you open voice mode.
+The app shows a banner for unacknowledged alerts when it opens.
 
 **If the alerts are all you:** your enrolment probably isn't representative.
 Re-enrol, or lower the threshold. A system that keeps refusing its owner gets

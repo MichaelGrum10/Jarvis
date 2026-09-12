@@ -396,9 +396,6 @@ export function chunkForSpeech(text, limit = IS_WEBKIT ? 180 : 200) {
 
 /* ---------------- mode ---------------- */
 
-export const isMobile = () =>
-  /Mobi|Android|iPhone|iPod/.test(navigator.userAgent) ||
-  (/iPad|Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 
 /**
  * Phones default to text, desktops default to voice — but the choice is yours on

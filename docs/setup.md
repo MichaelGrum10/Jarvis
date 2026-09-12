@@ -77,7 +77,7 @@ revoking it from the same page cuts Jarvis off without touching your account.
 ## 4. Domain, TLS, launch
 
 You need HTTPS — browsers refuse geolocation, the microphone and service workers
-over plain HTTP, so neither voice mode nor "find a barber near me" works without
+over plain HTTP, so neither voice nor "find a barber near me" works without
 it. HTTPS in turn needs a domain, because certificates can't be issued for a bare
 IP address.
 
@@ -106,8 +106,8 @@ makes "near me" follow you as you travel.
 Do the same on any other device; each gets its own token, all revocable at once by
 rotating `AUTH_SECRET`.
 
-Voice works out of the box on that same HTTPS — see [voice.md](voice.md). Desktops
-open in voice mode, phones in text mode, and the top-bar button switches either way.
+Voice works out of the box on that same HTTPS — see [voice.md](voice.md). There is
+one screen: tap the ring to talk, or type in the bar underneath it.
 
 ## 5. Messages bridge (optional, needs a Mac)
 

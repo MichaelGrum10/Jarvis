@@ -27,6 +27,9 @@ class ToolContext:
     lon: float | None = None
     timezone: str = "UTC"
     conversation_id: int | None = None
+    # Set only by the confirm endpoint, for the one call it is confirming. A
+    # tool flagged `confirm` will not run without it — see dispatch().
+    confirmed: bool = False
 
     @property
     def has_location(self) -> bool:
@@ -87,7 +90,9 @@ class Tool:
     # hidden from the model rather than failing mid-conversation.
     requires: str = ""
     needs_location: bool = False
-    confirm: bool = False  # destructive — agent must ask before calling
+    # Enforced in dispatch(): the call is parked and a Confirm card is shown,
+    # and the tool runs only when the owner taps it. Not a hint to the model.
+    confirm: bool = False
     tags: list[str] = field(default_factory=list)
 
     def schema(self) -> dict:
@@ -160,6 +165,33 @@ class ToolRegistry:
             return ToolResult.fail(
                 "No device location available. Ask the user to allow location access "
                 "in the Jarvis app, or to name the city they're in."
+            )
+        if tool.confirm and not ctx.confirmed:
+            # The gate. This used to be a sentence in the tool's description
+            # asking the model to check first — a request, not a guard. The call
+            # is parked with everything needed to run it and the app shows a
+            # button; the tool runs only from the confirm endpoint, which is the
+            # only place that sets ctx.confirmed.
+            from .. import confirm as confirmations
+
+            pending = confirmations.hold(
+                name, arguments, ctx.device_id, ctx.conversation_id,
+                confirmations.describe(name, arguments),
+            )
+            # ok=True with an explicit status, not a failure: the model needs to
+            # know to stop and tell the user, and a failure here would be logged
+            # as a broken tool and fed to self-improvement as something to fix.
+            return ToolResult.success(
+                {
+                    "status": "pending_confirmation",
+                    "action": pending.summary,
+                    "instruction": (
+                        "Nothing has happened yet. A Confirm button is on the user's "
+                        "screen. Tell them briefly what it will do and that they can "
+                        "confirm or cancel there. Do not call this tool again."
+                    ),
+                },
+                display=pending.card(),
             )
         try:
             kwargs = self._bind(tool.handler, arguments, ctx)

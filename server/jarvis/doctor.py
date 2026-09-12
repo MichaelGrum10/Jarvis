@@ -428,6 +428,26 @@ def check_config(report: Report) -> None:
         f"{cached['bytes'] // 1024}KB",
     )
 
+    # The custom slot is the only one with no defaults, so it is the only one
+    # that can be half-filled — and the pool silently skips a half-filled slot
+    # rather than build an endpoint that fails every request. Silent is the
+    # problem: someone who set two of the three values sees no custom endpoint
+    # and no explanation. This is where OmniRoute plugs in (docs/omniroute.md).
+    custom = {
+        "CUSTOM_BASE_URL": settings.custom_base_url,
+        "CUSTOM_API_KEY": settings.custom_api_key,
+        "CUSTOM_MODEL": settings.custom_model,
+    }
+    if any(custom.values()) and not all(custom.values()):
+        unset = [k for k, v in custom.items() if not v]
+        report.bad(
+            "Custom endpoint", f"half configured — the pool is ignoring it",
+            f"Set the missing value(s): {', '.join(unset)}\n"
+            "bash scripts/omniroute.sh   sets all three at once",
+        )
+    elif all(custom.values()):
+        report.ok("Custom endpoint", f"{settings.custom_base_url} → {settings.custom_model}")
+
     # Which provider keys are actually loaded. Grepping .env only proves a line
     # exists — an empty value looks identical and does nothing.
     configured, blank = [], []

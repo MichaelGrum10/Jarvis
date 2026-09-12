@@ -190,50 +190,9 @@ html, body {
 }
 .composer button:disabled { background: var(--bg-3); color: var(--muted); }
 
-/* ---------- voice mode ---------- */
-.voice-panel {
-  flex: none; display: flex; flex-direction: column; align-items: center; gap: 12px;
-  padding: 20px 16px calc(22px + var(--safe-b));
-  background: rgba(11,15,20,.95); backdrop-filter: blur(12px);
-  border-top: 1px solid var(--line);
-}
-.voice-transcript {
-  min-height: 24px; max-height: 84px; overflow-y: auto;
-  font-size: 15px; color: var(--muted); text-align: center; line-height: 1.4;
-}
-.voice-orb {
-  position: relative; width: 84px; height: 84px; flex: none;
-  display: grid; place-items: center; cursor: pointer;
-  background: var(--bg-3); border: 1px solid var(--line); border-radius: 50%;
-  transition: transform .15s, background .2s, border-color .2s;
-}
-.voice-orb:active { transform: scale(.94); }
-.voice-orb .orb-icon { font-size: 30px; line-height: 1; }
-.voice-orb .orb-ring {
-  position: absolute; inset: -6px; border-radius: 50%;
-  border: 2px solid transparent; transition: border-color .2s;
-}
-.voice-orb.listening {
-  background: var(--accent-dim); border-color: var(--accent);
-}
-.voice-orb.listening .orb-ring {
-  border-color: var(--accent);
-  animation: ripple 1.5s ease-out infinite;
-}
-@keyframes ripple {
-  0%   { transform: scale(1);    opacity: .9; }
-  100% { transform: scale(1.35); opacity: 0; }
-}
-.voice-hint { font-size: 13px; color: var(--muted); text-align: center; min-height: 1.2em; }
-.voice-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
-.voice-actions .ghost-btn { text-align: center; padding: 8px 14px; font-size: 13px; }
-
+/* ---------- dictation ---------- */
 .icon-btn.mic { flex: none; font-size: 17px; }
 .icon-btn.mic.active { color: var(--accent); background: var(--accent-dim); }
-
-@media (prefers-reduced-motion: reduce) {
-  .voice-orb.listening .orb-ring { animation: none; opacity: .9; }
-}
 
 /* ---------- modal ---------- */
 .modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 16px; background: rgba(0,0,0,.6); }
@@ -526,3 +485,9 @@ html, body {
 .wake-greeting:empty { display: none; }
 .wake-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--accent); }
 .wake-sub { margin: 0; color: var(--muted); font-size: 13px; }
+
+/* The confirmation card: the one card with buttons on it. */
+.card.confirm { border-color: rgba(255, 180, 84, .55); }
+.confirm-actions { display: flex; gap: 8px; padding-top: 10px; }
+.confirm-yes { background: var(--accent); color: #04121f; border-color: var(--accent); font-weight: 650; }
+.confirm-yes:disabled, .confirm-no:disabled { opacity: .5; }

@@ -67,7 +67,7 @@ prohibit automated access, so this is a decision to make knowingly. It ships off
 **You need a domain, but it can be free.** A domain is just a name pointing at
 your server's IP address — and you need one because HTTPS certificates can't be
 issued for a bare IP, while browsers block both the microphone and geolocation on
-anything that isn't HTTPS. So no domain means no voice mode and no "near me".
+anything that isn't HTTPS. So no domain means no voice and no "near me".
 DuckDNS gives you one free in about two minutes; a bought one is ~$10/year and
 works identically. Walkthrough in [docs/domain.md](docs/domain.md).
 
@@ -224,19 +224,24 @@ holding — never the server's IP. Tap the ◎ button to share it. This is why t
 travel case works: the server sits in a datacentre, but "near me" resolves to
 wherever you actually are.
 
-### Voice or text
+### Talk or type — one screen
 
-Phones open in **text** mode, desktops open in **voice** mode, and the ⌨/🎙 button
-in the top bar switches either way — your choice sticks per device.
+There is no mode switch. The HUD is the whole app: a ring you tap to talk, a type
+bar underneath it, and panels for markets, the day's briefing and the inbox.
 
-In voice mode you tap the orb, talk, and hear the answer back; tapping again while
-it's speaking cuts it off and starts listening. In text mode you type, but the 🎙
-button still dictates into the composer when you'd rather not.
+**The reply comes back the way the question went in.** Type and the answer is
+written into a Transcript panel; talk to the ring and it is spoken aloud. The 🎙
+on the type bar is dictation only — it fills the box and leaves the sending to
+you. Talking over Jarvis mid-sentence cuts him off and starts listening.
 
-Voice mode is a full-screen HUD — no transcript, no composer. The ring carries
-the state: cyan while listening, **amber and pulsing while it works**, bright
-while speaking. Say **"Jarvis"** to start hands-free, or tap the ring. Jarvis
-answers in the closest British voice your device has.
+The ring carries the state: cyan while listening, **amber and pulsing while it
+works**, bright while speaking, with the arc reactor in the middle tracking his
+voice. Jarvis speaks in your cloned ElevenLabs voice when it is configured, and
+in the closest British voice the device has when it is not — and says which.
+
+Saying "Jarvis" hands-free only works on the Mac, where the companion agent
+listens locally; no browser can keep a microphone open, and the app says so
+rather than pretending.
 
 It can also answer only *you*: enrol your voice, and other speakers are refused
 with an alert pushed to every device. Be clear about what that is, though — a

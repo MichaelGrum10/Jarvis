@@ -19,7 +19,7 @@ looks up the number, and the request goes to your server.
 Convenience isn't the real reason. **You cannot get an HTTPS certificate for a
 bare IP address**, and modern browsers gate two features behind HTTPS:
 
-- **Microphone access** — no HTTPS, no voice mode
+- **Microphone access** — no HTTPS, no voice
 - **Geolocation** — no HTTPS, no "find a barber near me"
 
 Both are things you specifically wanted, and both are hard browser rules that no

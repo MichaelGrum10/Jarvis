@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
+from .. import confirm as confirmations
 from ..agent.loop import Agent, history_from_rows
 from ..config import Settings, get_settings
 from ..db import Conversation, Device, Message, load_history, session_scope, utcnow
@@ -188,3 +189,61 @@ async def delete_conversation(conversation_id: int, device: CurrentDevice):
             await session.delete(row)
         await session.delete(conversation)
     return {"deleted": conversation_id}
+
+
+# ------------------------------------------------------------ confirmations
+#
+# The other half of the gate in tools/base.py. A confirm-flagged tool parks its
+# call and shows a card; these two endpoints are the only way it ever runs.
+
+
+@router.get("/confirm/{action_id}")
+async def confirm_peek(action_id: str, device: CurrentDevice):
+    pending = confirmations.peek(action_id)
+    if pending is None or pending.device_id != device.get("device_id", ""):
+        raise HTTPException(404, "That action has expired or was already decided.")
+    return pending.card()
+
+
+@router.post("/confirm/{action_id}")
+async def confirm_run(action_id: str, device: CurrentDevice, settings: Settings = Depends(get_settings)):
+    """Run a parked action. Once, and only from the device that was asked."""
+    device_id = device.get("device_id", "")
+    pending = confirmations.take(action_id, device_id)
+    if pending is None:
+        raise HTTPException(404, "That action has expired or was already decided.")
+
+    from ..tools.base import registry
+
+    # The one place ctx.confirmed is ever set, for the one call it covers.
+    ctx = ToolContext(
+        device_id=device_id,
+        timezone=settings.timezone,
+        conversation_id=pending.conversation_id,
+        confirmed=True,
+    )
+    result = await registry.dispatch(pending.tool, pending.arguments, ctx)
+
+    # Into the transcript, so the conversation records what was actually done
+    # rather than only that it was proposed.
+    if pending.conversation_id:
+        note = f"✅ Confirmed: {pending.summary}" if result.ok else f"⚠️ {pending.summary} — {result.error}"
+        async with session_scope() as session:
+            conversation = await session.get(Conversation, pending.conversation_id)
+            if conversation is not None:
+                session.add(Message(conversation_id=conversation.id, role="assistant", content=note))
+                conversation.updated_at = utcnow()
+
+    return {
+        "ok": result.ok,
+        "error": result.error,
+        "display": result.display,
+        "summary": pending.summary,
+    }
+
+
+@router.delete("/confirm/{action_id}")
+async def confirm_cancel(action_id: str, device: CurrentDevice):
+    if not confirmations.cancel(action_id, device.get("device_id", "")):
+        raise HTTPException(404, "That action has expired or was already decided.")
+    return {"cancelled": True}

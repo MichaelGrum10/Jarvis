@@ -512,6 +512,17 @@ function renderCard(d) {
   } else if (d.type === 'device_action') {
     card.appendChild(el('h4', null, 'Device'));
     rows.push(`<div class="row"><div class="r-main"><div class="r-title">${esc(d.action)}</div></div></div>`);
+  } else if (d.type === 'confirm') {
+    // The gate for anything that sends, deletes or changes state. Nothing has
+    // happened yet; the tool runs only when this button is pressed, and only
+    // from this device.
+    card.classList.add('confirm');
+    card.appendChild(el('h4', null, 'Needs your OK'));
+    rows.push(`<div class="row"><div class="r-main"><div class="r-title">${esc(d.summary)}</div>
+      <div class="r-sub">Nothing has happened yet.</div></div></div>`);
+    rows.push(`<div class="confirm-actions">
+      <button class="chip confirm-yes" data-id="${esc(d.id)}">Confirm</button>
+      <button class="chip confirm-no" data-id="${esc(d.id)}">Cancel</button></div>`);
   } else {
     return null;
   }
@@ -706,10 +717,32 @@ async function describeWakeWord() {
   line.dataset.state = 'off';
 }
 
+/** Answer a Confirm card: run the parked action, or throw it away. */
+async function decide(id, yes, card) {
+  for (const b of card.querySelectorAll('button')) b.disabled = true;
+  try {
+    if (!yes) {
+      await api(`/api/chat/confirm/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      card.querySelector('.r-sub').textContent = 'Cancelled.';
+      card.querySelector('.confirm-actions').remove();
+      return;
+    }
+    const res = await api(`/api/chat/confirm/${encodeURIComponent(id)}`, { method: 'POST' });
+    card.querySelector('.confirm-actions').remove();
+    card.querySelector('.r-sub').textContent = res.ok ? 'Done.' : `Failed: ${res.error}`;
+    if (res.display) renderDisplays([res.display]);
+    addMessage('assistant', res.ok ? `Done — ${res.summary}.` : `⚠️ ${res.error}`);
+  } catch (err) {
+    card.querySelector('.r-sub').textContent = err.message;
+    for (const b of card.querySelectorAll('button')) b.disabled = false;
+  }
+}
+
 /* ---------------- HUD state ----------------
  * idle | listening | thinking | speaking | denied
- * The ring's colour and motion carry the state; there is deliberately no text
- * transcript in voice mode. */
+ * The ring's colour and motion carry the state. A spoken turn is not written
+ * into the transcript panel — you already know what you said — but a typed
+ * one is; see speakReply and askedByVoice. */
 
 function setHudState(state, status) {
   $('hud').dataset.state = state;
@@ -1363,6 +1396,10 @@ $('input').addEventListener('keydown', (e) => {
   }
 });
 document.addEventListener('click', (e) => {
+  if (e.target.classList.contains('confirm-yes') || e.target.classList.contains('confirm-no')) {
+    decide(e.target.dataset.id, e.target.classList.contains('confirm-yes'), e.target.closest('.card'));
+    return;
+  }
   if (e.target.classList.contains('chip')) send(e.target.textContent);
 });
 
