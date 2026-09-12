@@ -655,9 +655,12 @@ async def check_speech(report: Report) -> None:
         )
         return
 
+    from .integrations import fish
+
     report.ok("Fish key", mask(settings.fish_api_key))
     report.ok("Fish voice id", mask(settings.fish_voice_id))
-    report.ok("Fish model", settings.fish_model)
+    model = fish.model_name(settings)
+    report.ok("Fish model", f"{model} ({'free tier' if fish.is_free(model) else 'billed per character'})")
 
     check = await tts.verify(settings)
     if not check.get("ok"):

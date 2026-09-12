@@ -300,9 +300,39 @@ def test_a_credit_failure_is_flagged_as_one(client, token, voice, monkeypatch):
 
 def test_fish_errors_name_the_fix_and_never_echo_the_body():
     assert "API key" in str(fish._explain(401, ""))
-    exhausted = fish._explain(402, '{"detail":"insufficient credit"}')
+    exhausted = fish._explain(402, '{"detail":"insufficient credit"}', "s2-pro")
     assert exhausted.quota is True
+    assert "FISH_MODEL=s2.1-pro-free" in str(exhausted), "a paid model with no credit points at the free one"
+    on_free = fish._explain(402, "", "s2.1-pro-free")
+    assert "fair-use" in str(on_free) and "credits are used up" not in str(on_free), \
+        "buying credit does not fix a 402 on the free tier, so do not say it does"
     assert "sk-" not in str(fish._explain(401, "invalid key sk-secret-thing"))
+
+
+def test_the_free_model_is_the_default_and_rides_the_same_header(client, token, voice, fake_http, monkeypatch):
+    """The 402 that started this: the default was a paid model and the wallet
+    was empty. Fish's free tier is a model name, sent the same way."""
+    from jarvis.config import Settings
+
+    assert Settings.model_fields["fish_model"].default == "s2.1-pro-free"
+    monkeypatch.setattr(voice, "fish_model", "s2.1-pro-free")
+
+    url = client.post("/api/voice/speak", headers=auth(token), json={"text": "Free."}).json()["url"]
+    assert client.get(url).status_code == 200
+    assert fake_http.calls[0]["headers"]["model"] == "s2.1-pro-free"
+
+
+def test_an_empty_wallet_is_fine_on_the_free_model(client, token, voice, fake_http, monkeypatch):
+    fake_http.gets["/wallet/self/api-credit"] = (200, {"credit": "0"})
+    fake_http.gets[f"/model/{VOICE}"] = (200, {"title": "Michael", "state": "trained"})
+
+    monkeypatch.setattr(voice, "fish_model", "s2.1-pro-free")
+    check = client.get("/api/voice/speech-status?verify=1", headers=auth(token)).json()["check"]
+    assert check["ok"] is True and check["free"] is True
+
+    monkeypatch.setattr(voice, "fish_model", "s2-pro")
+    check = client.get("/api/voice/speech-status?verify=1", headers=auth(token)).json()["check"]
+    assert check["ok"] is False and "s2.1-pro-free" in check["error"]
 
 
 def test_status_reports_what_is_missing(client, token, monkeypatch):
@@ -382,7 +412,7 @@ def test_verify_accepts_a_real_key_and_a_trained_voice(client, token, voice, fak
         ((200, {"credit": "1"}), (200, {"title": "x", "state": "training"}), "still training"),
         ((200, {"credit": "1"}), (200, {"title": "x", "state": "created"}), "still training"),
         ((200, {"credit": "1"}), (200, {"title": "x", "state": "failed"}), "failed to train"),
-        ((200, {"credit": "0"}), (200, {"title": "x", "state": "trained"}), "credits are used up"),
+        ((200, {"credit": "0"}), (200, {"title": "x", "state": "trained"}), "credits are used up"),   # fixture model is paid s2-pro
     ],
 )
 def test_verify_names_each_way_it_can_be_wrong(client, token, voice, fake_http, credit, model, expect):

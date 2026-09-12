@@ -202,11 +202,12 @@ class Settings(BaseSettings):
     # be trivially scraped out of anything served to a phone.
     #
     # The voice id is the model id of your cloned voice on fish.audio (the SDK
-    # calls it reference_id). s2-pro is the current model; s1 also works;
-    # speech-1.5/1.6 are deprecated upstream.
+    # calls it reference_id). s2.1-pro-free is Fish's free developer tier and
+    # needs no credit; s2.1-pro, s2-pro and s1 bill per character from the
+    # API-credit wallet. speech-1.5/1.6 are deprecated upstream.
     fish_api_key: str = Field("", description="Fish Audio API key; never sent to a browser")
     fish_voice_id: str = Field("", description="Cloned voice id on fish.audio")
-    fish_model: str = "s2-pro"
+    fish_model: str = "s2.1-pro-free"
     fish_latency: str = "balanced"      # or "normal" for slightly better quality
 
     # Where this server is reachable from outside. Only needed so the Mac can

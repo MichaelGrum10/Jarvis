@@ -36,12 +36,25 @@ CONNECT_TIMEOUT = 8.0
 # Time-to-first-byte on a stream we then read incrementally; generous on purpose.
 READ_TIMEOUT = 30.0
 
-MODELS = ("s1", "s2-pro")
+# `s2.1-pro-free` is Fish's free developer tier of S2.1 Pro (fair-use limits,
+# no credit needed) and is the default here. The paid names bill per character
+# from the API-credit wallet. The 1.3.0 SDK predates s2.1 and does not list
+# it; the API takes it in the same header.
+FREE_MODEL = "s2.1-pro-free"
+MODELS = ("s1", "s2-pro", "s2.1-pro", FREE_MODEL)
+
+
+def model_name(settings: Settings) -> str:
+    return (settings.fish_model or FREE_MODEL).strip()
+
+
+def is_free(model: str) -> bool:
+    return model.endswith("-free")
 
 
 async def fetch(text: str, settings: Settings) -> AsyncIterator[bytes]:
     """Stream mp3 for `text` in the configured cloned voice."""
-    model = (settings.fish_model or "s2-pro").strip()
+    model = model_name(settings)
     if model not in MODELS:
         # Deprecated names still answer today, but the SDK warns on them and
         # they will go. Say so once rather than let the voice vanish one day.
@@ -76,7 +89,7 @@ async def fetch(text: str, settings: Settings) -> AsyncIterator[bytes]:
             ) as response:
                 if response.status_code >= 400:
                     body = (await response.aread()).decode("utf-8", "replace")[:400]
-                    raise _explain(response.status_code, body)
+                    raise _explain(response.status_code, body, model)
                 async for chunk in response.aiter_bytes():
                     yield chunk
     except httpx.HTTPError as exc:
@@ -132,14 +145,20 @@ async def verify(settings: Settings) -> dict:
         out["error"] = f"Could not reach Fish Audio: {exc}"
         return out
 
-    if out.get("credit") is not None and out["credit"] <= 0:
-        out["error"] = "Fish Audio credits are used up."
+    model = model_name(settings)
+    out["model"] = model
+    out["free"] = is_free(model)
+    if not out["free"] and out.get("credit") is not None and out["credit"] <= 0:
+        out["error"] = (
+            f"Fish Audio credits are used up, and {model} is a paid model — "
+            f"set FISH_MODEL={FREE_MODEL} for the free one."
+        )
         return out
     out["ok"] = True
     return out
 
 
-def _explain(status: int, body: str) -> SpeechError:
+def _explain(status: int, body: str, model: str = "") -> SpeechError:
     """Turn an API error into something the status line can show a person.
 
     The message reaches a browser. The key travels in a header and nothing
@@ -149,7 +168,14 @@ def _explain(status: int, body: str) -> SpeechError:
     if status == 401:
         return SpeechError("Fish Audio rejected the API key.")
     if status == 402 or "credit" in lowered or "balance" in lowered or "quota" in lowered:
-        return SpeechError("Fish Audio credits are used up.", quota=True)
+        if model and is_free(model):
+            # The free tier has fair-use limits it does not publish. A 402 on
+            # it is not fixed by buying credit, so do not say it is.
+            return SpeechError(f"Fish Audio refused the free model {model} (fair-use limit?).", quota=True)
+        return SpeechError(
+            f"Fish Audio credits are used up — set FISH_MODEL={FREE_MODEL} for the free model.",
+            quota=True,
+        )
     if status == 403:
         return SpeechError("Fish Audio refused that voice — is the reference id yours to use?")
     if status == 404:

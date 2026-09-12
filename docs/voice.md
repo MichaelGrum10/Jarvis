@@ -284,7 +284,15 @@ screen.
 
 | Key | Voice id | Model |
 | --- | --- | --- |
-| `FISH_API_KEY` | `FISH_VOICE_ID` — your cloned voice's model id on fish.audio (the SDK calls it `reference_id`) | `FISH_MODEL`, default `s2-pro`; `s1` also current |
+| `FISH_API_KEY` | `FISH_VOICE_ID` — your cloned voice's model id on fish.audio (the SDK calls it `reference_id`) | `FISH_MODEL`, default `s2.1-pro-free` |
+
+**The default model is the free one.** Fish offers S2.1 Pro as a free developer
+tier under the model name `s2.1-pro-free`, with fair-use limits it does not
+publish and no credit required. `s2.1-pro`, `s2-pro` and `s1` bill per character
+from the API-credit wallet, and a wallet at zero answers every request with 402.
+The model is chosen by the same `model` header either way, so switching is one
+`.env` line. The 1.3.0 SDK predates S2.1 and does not list it; the API accepts
+it.
 
 **The browser never talks to Fish.** It asks this server, and the server holds
 the key. That matters more than usual here: a TTS key is billed per character
@@ -329,7 +337,8 @@ and in a banner. The reasons, and what each one means:
 | *That Fish Audio voice id does not exist* | The id is mistyped, or is not the model id (it is the hex string on the voice's page). |
 | *That Fish Audio voice is still training* | Fish reports the clone as `created` or `training`; a usable one is `trained`. Wait, then reload. |
 | *That Fish Audio voice failed to train* | Fish gave up on the clone. Re-clone it and set the new id. |
-| *Fish Audio credits are used up* | Top up on fish.audio. The cloned voice stays off for the session; reload after. |
+| *Fish Audio credits are used up — set FISH_MODEL=s2.1-pro-free* | A paid model with an empty API-credit wallet. Use the free model, or top up. The cloned voice stays off for the session; reload after. |
+| *Fish Audio refused the free model (fair-use limit?)* | 402 on `s2.1-pro-free`. Fish's fair-use ceiling is unpublished; wait, or switch to a paid model with credit. |
 | *The phone blocked playback until you tap the screen* | iOS only lets audio play after a tap on this page. Tap once; the next line is his. |
 | *The cloned voice stopped mid-sentence* | The stream died. The next line retries. |
 
