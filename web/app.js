@@ -8,14 +8,14 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=23';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=23';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=23';
-import { initPanels, resetLayout } from '/static/panels.js?v=23';
-import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned, unlockAudio } from '/static/speech.js?v=23';
-import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=23';
+import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=24';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=24';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=24';
+import { initPanels, resetLayout } from '/static/panels.js?v=24';
+import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned, unlockAudio } from '/static/speech.js?v=24';
+import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=24';
 import { initReactor, reactorAnalyse, reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
-  from '/static/reactor.js?v=23';
+  from '/static/reactor.js?v=24';
 
 const API = '';
 const store = {

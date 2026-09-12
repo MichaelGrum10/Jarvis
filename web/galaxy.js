@@ -19,9 +19,9 @@
  * and is unreachable from a phone without an SSH tunnel.
  */
 
-import { reactorHidden, toggleReactor } from '/static/reactor.js?v=23';
+import { reactorHidden, toggleReactor } from '/static/reactor.js?v=24';
 
-const LIB = '/static/vendor/3d-force-graph.min.js?v=23';
+const LIB = '/static/vendor/3d-force-graph.min.js?v=24';
 
 let graph = null;          // the ForceGraph3D instance
 let deps = { api: null };

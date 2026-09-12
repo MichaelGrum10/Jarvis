@@ -326,7 +326,24 @@ def test_missing_names_only_what_is_missing(monkeypatch):
     assert tts.missing(settings) == ["FISH_VOICE_ID"], "whitespace is not a voice id"
 
 
-def test_status_names_the_provider(client, token, voice):
+def test_a_failed_render_is_remembered_for_the_status_line(client, token, voice, monkeypatch):
+    """The key and voice can both check out while the render is refused. The
+    element that asked for it throws the 503 body away; this is where the
+    reason survives so the browser can show it."""
+    async def refused(text, settings=None):
+        raise tts.SpeechError("Fish Audio refused the request (bad text or settings).")
+        yield b""                                     # pragma: no cover
+
+    monkeypatch.setattr("jarvis.api.voice.tts.stream", refused)
+    url = client.post("/api/voice/speak", headers=auth(token), json={"text": "Hello."}).json()["url"]
+    assert client.get(url).status_code == 503
+
+    body = client.get("/api/voice/speech-status", headers=auth(token)).json()
+    assert "refused the request" in body["last_error"]
+
+
+def test_status_names_the_provider(client, token, voice, monkeypatch):
+    monkeypatch.setattr("jarvis.api.voice._last_error", {"message": "", "at": 0.0})
     body = client.get("/api/voice/speech-status", headers=auth(token)).json()
     assert body == {**body, "configured": True, "provider": "fish", "label": "Fish Audio", "missing": []}
     assert "check" not in body, "no network call unless asked for one"

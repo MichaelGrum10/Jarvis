@@ -194,8 +194,11 @@ async function explainFailure(fallbackWhy) {
   try {
     const status = await deps.api('/api/voice/speech-status?verify=1');
     const check = status?.check;
-    if (check && !check.ok && check.error) {
-      const why = String(check.error).replace(/\.$/, '');
+    // The render's own failure first: the key and voice can both check out
+    // while the request to speak is refused, and only the server saw why.
+    const reason = status?.last_error || (check && !check.ok && check.error) || '';
+    if (reason) {
+      const why = String(reason).replace(/\.$/, '');
       if (/rejected|does not exist|credits|failed to train|not configured/i.test(why)) disableCloned(why);
       return why;
     }

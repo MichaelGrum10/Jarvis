@@ -307,6 +307,18 @@ line rendered in one voice is never played back as if another said it.
 
 ### You hear the wrong voice
 
+First split the problem in two, from the server:
+
+    bash scripts/say.sh
+
+That asks the running server to render one line and reports what Fish said
+back, with no phone involved. A green line with a byte count means the server
+side works and the problem is on the phone (close the app fully and reopen it,
+then read the status line). A red line prints the reason Fish gave. The same
+reason is in `docker compose logs jarvis` as "Cloned voice: …", and the phone
+asks the server for it too, since an `<audio>` element throws away the body of
+a failed response.
+
 Every path to the browser's voice says why, in the status line under the ring
 and in a banner. The reasons, and what each one means:
 

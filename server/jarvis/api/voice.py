@@ -191,6 +191,11 @@ async def _whisper(
 _pending: dict[str, tuple[str, float]] = {}
 PENDING_TTL = 300.0
 
+# The most recent reason a clip could not be produced. An <audio> element
+# throws away the 503 body that carried it, so the browser asks here instead;
+# it is also the first thing to read when "it uses the wrong voice".
+_last_error: dict = {"message": "", "at": 0.0}
+
 
 def _sweep() -> None:
     cutoff = time.time() - PENDING_TTL
@@ -262,8 +267,12 @@ async def audio(key: str, t: str = "", settings: Settings = Depends(get_settings
         stream = body()
         first = await stream.__anext__()
     except StopAsyncIteration:
-        raise HTTPException(502, f"{tts.label(settings)} returned no audio.") from None
+        _last_error.update(message=f"{tts.label(settings)} returned no audio.", at=time.time())
+        log.warning("Cloned voice: %s", _last_error["message"])
+        raise HTTPException(502, _last_error["message"]) from None
     except tts.SpeechError as exc:
+        _last_error.update(message=str(exc), at=time.time())
+        log.warning("Cloned voice: %s", exc)
         raise HTTPException(503, str(exc), headers={"X-Speech-Quota": "1" if exc.quota else "0"}) from None
 
     async def rest() -> AsyncIterator[bytes]:
@@ -299,6 +308,10 @@ async def speech_status(
         "label": tts.label(settings),
         "missing": settings.missing_for("tts"),
         "cached_lines": len(list(tts.cache_dir(settings).glob("*.mp3"))),
+        # The last failed render, if any in the last few minutes. verify() can
+        # pass — key fine, voice fine — while the render itself is refused;
+        # this is the only place that reason survives.
+        "last_error": _last_error["message"] if time.time() - _last_error["at"] < PENDING_TTL else "",
     }
     if verify:
         body["check"] = await tts.verify(settings)
