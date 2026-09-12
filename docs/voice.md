@@ -278,31 +278,52 @@ WebKit-specific, and both are unverified.
 
 ## The cloned voice
 
-Two providers, one door. Set either pair in `.env` and Jarvis speaks in that
-voice; set neither and he uses the browser's own voice and says so in the status
-line.
+Fish Audio, and only Fish Audio. Set both values in `.env` and Jarvis speaks in
+that voice; set neither and he uses the browser's own voice and says so on
+screen.
 
-| | Key | Voice id | Model |
-| --- | --- | --- | --- |
-| **Fish Audio** | `FISH_API_KEY` | `FISH_VOICE_ID` — your cloned voice's model id on fish.audio (the SDK calls it `reference_id`) | `FISH_MODEL`, default `s2-pro`; `s1` also current |
-| **ElevenLabs** | `ELEVENLABS_API_KEY` | `ELEVENLABS_VOICE_ID` | `ELEVENLABS_MODEL`, default `eleven_turbo_v2_5` |
+| Key | Voice id | Model |
+| --- | --- | --- |
+| `FISH_API_KEY` | `FISH_VOICE_ID` — your cloned voice's model id on fish.audio (the SDK calls it `reference_id`) | `FISH_MODEL`, default `s2-pro`; `s1` also current |
 
-Fish is preferred when both are configured; `TTS_PROVIDER=fish` or
-`=elevenlabs` forces one. Forcing a provider that has no key does **not** fall
-through to the other — "I set ElevenLabs and it is still Fish" is the wrong
-surprise — it disables the cloned voice and doctor names what is missing.
-
-**The browser never talks to either service.** It asks this server, and the
-server holds the key. That matters more than usual here: a TTS key is billed
-per character and would be trivially scraped out of anything served to a phone.
+**The browser never talks to Fish.** It asks this server, and the server holds
+the key. That matters more than usual here: a TTS key is billed per character
+and would be trivially scraped out of anything served to a phone.
 
 **Fish's request shape was taken from its own Python SDK**, not from memory: a
 msgpack body, the key as a Bearer token, and the model chosen by a `model`
 *header* — put it in the body and Fish silently uses its default. A test pins
 each of those.
 
-Switching provider, voice or model re-renders every line: the cache key carries
-all three, so a line ElevenLabs said is never played back as if Fish said it.
+**Configured is not the same as working.** Doctor, and the browser once at boot
+(`/api/voice/speech-status?verify=1`), ask Fish whether the key is accepted,
+whether the voice id exists and is trained, and whether there is credit — the
+two SDK calls that render nothing and cost nothing. A wrong key or a voice id
+copied with a stray character is named on screen rather than heard as the wrong
+voice on the first reply.
+
+Switching voice or model re-renders every line: the cache key carries both, so a
+line rendered in one voice is never played back as if another said it.
+
+### You hear the wrong voice
+
+Every path to the browser's voice says why, in the status line under the ring
+and in a banner. The reasons, and what each one means:
+
+| Status line | Meaning |
+| --- | --- |
+| *Fish Audio voice not set up (missing …)* | `.env` lacks one of the two values on the server. `bash scripts/setkey.sh FISH_API_KEY …` and `FISH_VOICE_ID …`, then `docker compose up -d`. |
+| *Fish Audio rejected the API key* | The key is wrong or revoked. |
+| *That Fish Audio voice id does not exist* | The id is mistyped, or is not the model id (it is the hex string on the voice's page). |
+| *Fish Audio credits are used up* | Top up on fish.audio. The cloned voice stays off for the session; reload after. |
+| *The phone blocked playback until you tap the screen* | iOS only lets audio play after a tap on this page. Tap once; the next line is his. |
+| *The cloned voice stopped mid-sentence* | The stream died. The next line retries. |
+
+On iOS specifically: the boot tap ("Good evening, sir") unlocks the audio
+element that every later line plays through. Skipping the gate — say, by
+reloading with the greeting already spoken this session — leaves the first
+programmatic play refused until any tap on the page, which is what the fourth
+row above is telling you.
 
 ### How a line gets spoken
 
@@ -320,9 +341,9 @@ The ticket is bound to one clip's hash and expires in five minutes. A leaked URL
 replays one line the owner already heard; it cannot be pointed at a different
 line, at another endpoint, or at the key.
 
-**Streaming, not batch.** The batch endpoint returns nothing until the whole clip
-is rendered — a couple of seconds of silence before he starts. `/stream` with
-`optimize_streaming_latency` sends audio as it is produced.
+**Streamed, not batched.** The response is read and forwarded as Fish produces
+it, with Fish's `latency: balanced` mode, so he starts on the first bytes rather
+than after the whole clip is rendered.
 
 **Cached by hash of the text, voice and model.** The boot greeting and the canned
 confirmations are identical every time and are said many times a day; rendering
@@ -332,9 +353,9 @@ clip to be served forever after.
 
 **Falling back.** A bad key, exhausted credits, a network blip, a browser that
 refuses to play — all of them land on the browser's own voice, and all of them
-say why in the status line. A credit or quota failure disables the cloned voice
-for the rest of the session rather than adding a doomed round trip to every
-sentence.
+say why in the status line (the table above). A credit failure disables the
+cloned voice for the rest of the session rather than adding a doomed round trip
+to every sentence.
 
 ## Interrupting him
 

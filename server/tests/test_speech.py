@@ -12,11 +12,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from jarvis.config import get_settings
-from jarvis.integrations import elevenlabs, fish, tts
+from jarvis.integrations import fish, tts
 from jarvis.main import app
 from jarvis.security import issue_speech_ticket
 
 CLIP = b"ID3\x04\x00" + b"\xff\xfb\x90d" * 400        # enough to pass the size floor
+KEY = "fish-test-key-never-leaves-here"
+VOICE = "802e3bc2b27e49c2995d23ef70e6ac89"
 
 
 @pytest.fixture
@@ -37,26 +39,10 @@ def auth(token):
 
 @pytest.fixture
 def voice(monkeypatch, tmp_path):
-    """ElevenLabs configured, Fish not — the original shape."""
+    """Fish configured, with the cache in a scratch directory."""
     settings = get_settings()
-    monkeypatch.setattr(settings, "tts_provider", "")
-    monkeypatch.setattr(settings, "fish_api_key", "")
-    monkeypatch.setattr(settings, "fish_voice_id", "")
-    monkeypatch.setattr(settings, "elevenlabs_api_key", "sk-test-key-never-leaves-here")
-    monkeypatch.setattr(settings, "elevenlabs_voice_id", "voice-123")
-    monkeypatch.setattr(settings, "data_dir", tmp_path)
-    return settings
-
-
-@pytest.fixture
-def fish_voice(monkeypatch, tmp_path):
-    """Fish configured, ElevenLabs not."""
-    settings = get_settings()
-    monkeypatch.setattr(settings, "tts_provider", "")
-    monkeypatch.setattr(settings, "elevenlabs_api_key", "")
-    monkeypatch.setattr(settings, "elevenlabs_voice_id", "")
-    monkeypatch.setattr(settings, "fish_api_key", "fish-test-key-never-leaves-here")
-    monkeypatch.setattr(settings, "fish_voice_id", "802e3bc2b27e49c2995d23ef70e6ac89")
+    monkeypatch.setattr(settings, "fish_api_key", KEY)
+    monkeypatch.setattr(settings, "fish_voice_id", VOICE)
     monkeypatch.setattr(settings, "fish_model", "s2-pro")
     monkeypatch.setattr(settings, "data_dir", tmp_path)
     return settings
@@ -64,7 +50,7 @@ def fish_voice(monkeypatch, tmp_path):
 
 @pytest.fixture
 def fake_api(monkeypatch, voice):
-    """Stand in for ElevenLabs, and record what it was sent."""
+    """Stand in for tts.stream, and record what it was asked to say."""
     calls = []
 
     async def fake_stream(text, settings=None):
@@ -83,6 +69,7 @@ class _FakeHTTP:
         self.calls = []
         self.status = status
         self.body = body
+        self.gets = {}            # url suffix -> (status, json body) for verify()
 
     def __call__(self, **kwargs):
         return self
@@ -109,6 +96,23 @@ class _FakeHTTP:
 
         return Response()
 
+    async def get(self, url, **kwargs):
+        self.calls.append({"url": url, **kwargs})
+        for suffix, (status, body) in self.gets.items():
+            if url.endswith(suffix):
+                return _Json(status, body)
+        return _Json(404, {})
+
+
+class _Json:
+    def __init__(self, status, body):
+        self.status_code = status
+        self._body = body
+        self.content = b"{}"
+
+    def json(self):
+        return self._body
+
 
 @pytest.fixture
 def fake_http(monkeypatch):
@@ -128,8 +132,8 @@ def test_the_key_is_never_in_any_response(client, token, fake_api):
     status = client.get("/api/voice/speech-status", headers=auth(token))
 
     blob = prepared.text + status.text + repr(dict(audio.headers)) + repr(dict(prepared.headers))
-    assert "sk-test-key-never-leaves-here" not in blob
-    assert "voice-123" not in blob          # the voice id is a credential too
+    assert KEY not in blob
+    assert VOICE not in blob          # the voice id is a credential too
 
 
 def test_speaking_needs_a_device_token(client, fake_api):
@@ -178,11 +182,33 @@ def test_audio_streams_back_and_is_mp3(client, token, fake_api):
     assert res.content == CLIP
 
 
+def test_the_fish_request_is_the_sdks_request(client, token, voice, fake_http):
+    """Shape copied from fish-audio-sdk 1.3.0, not remembered. The model goes in
+    a header — put it in the body and Fish silently uses its default."""
+    import ormsgpack
+
+    url = client.post("/api/voice/speak", headers=auth(token), json={"text": "Good evening, sir."}).json()["url"]
+    res = client.get(url)
+    assert res.status_code == 200
+    assert res.headers["X-Speech-Source"] == "fish"
+
+    call = fake_http.calls[0]
+    assert call["url"] == "https://api.fish.audio/v1/tts"
+    assert call["headers"]["Authorization"] == f"Bearer {KEY}"
+    assert call["headers"]["Content-Type"] == "application/msgpack"
+    assert call["headers"]["model"] == "s2-pro"
+    body = ormsgpack.unpackb(call["content"])
+    assert body["text"] == "Good evening, sir."
+    assert body["reference_id"] == VOICE
+    assert body["format"] == "mp3"
+    assert body["latency"] == "balanced"
+
+
 def test_the_second_ask_comes_from_cache(client, token, voice, fake_http):
     """The boot greeting is said every day and is identical every time.
 
-    Faked at the HTTP layer rather than at elevenlabs.stream, because
-    stream() is where the caching lives — stubbing it would test the stub.
+    Faked at the HTTP layer rather than at tts.stream, because stream() is
+    where the caching lives — stubbing it would test the stub.
     """
     for _ in range(2):
         url = client.post(
@@ -191,35 +217,34 @@ def test_the_second_ask_comes_from_cache(client, token, voice, fake_http):
         assert client.get(url).status_code == 200
 
     assert len(fake_http.calls) == 1, "the same line was rendered twice"
-    assert fake_http.calls[0]["json"]["text"] == "Good evening, sir."
-    # The key travels in a header to ElevenLabs and nowhere else.
-    assert fake_http.calls[0]["headers"]["xi-api-key"] == "sk-test-key-never-leaves-here"
 
 
 def test_a_cached_clip_says_it_came_from_cache(client, token, voice, fake_http):
     url = client.post("/api/voice/speak", headers=auth(token), json={"text": "Twice."}).json()["url"]
-    assert client.get(url).headers["X-Speech-Source"] == "elevenlabs"
+    assert client.get(url).headers["X-Speech-Source"] == "fish"
 
     again = client.post("/api/voice/speak", headers=auth(token), json={"text": "Twice."}).json()
     assert again["cached"] is True
     assert client.get(again["url"]).headers["X-Speech-Source"] == "cache"
 
 
-def test_the_streaming_endpoint_is_used_not_the_batch_one(client, token, voice, fake_http):
-    """Batch returns nothing until the whole clip is rendered — seconds of dead
-    air before he starts."""
-    client.get(client.post(
-        "/api/voice/speak", headers=auth(token), json={"text": "Latency matters."}
-    ).json()["url"])
-
-    call = fake_http.calls[0]
-    assert call["url"].endswith("/stream")
-    assert call["params"]["optimize_streaming_latency"] == elevenlabs.LATENCY_MODE
-
-
 def test_whitespace_does_not_mint_a_second_cache_entry(voice):
     assert tts.voice_key(tts.speakable_length("Good   evening,\n sir."), voice) == \
            tts.voice_key(tts.speakable_length("Good evening, sir."), voice)
+
+
+def test_changing_the_voice_or_model_re_renders(voice, monkeypatch):
+    """The cache key carries both: a line rendered in one voice must not be
+    served as if another said it."""
+    line = tts.speakable_length("Good evening, sir.")
+    first = tts.voice_key(line, voice)
+
+    monkeypatch.setattr(voice, "fish_model", "s1")
+    assert tts.voice_key(line, voice) != first
+
+    monkeypatch.setattr(voice, "fish_model", "s2-pro")
+    monkeypatch.setattr(voice, "fish_voice_id", "another-voice")
+    assert tts.voice_key(line, voice) != first
 
 
 def test_a_truncated_stream_is_not_left_in_the_cache(voice, monkeypatch):
@@ -247,8 +272,9 @@ def test_a_truncated_stream_is_not_left_in_the_cache(voice, monkeypatch):
 
 
 def test_unconfigured_says_so_rather_than_failing_obscurely(client, token, monkeypatch):
+    """The browser keys its "settled, stop asking" fallback on this exact
+    phrase — speech.js matches /not configured/."""
     settings = get_settings()
-    monkeypatch.setattr(settings, "elevenlabs_api_key", "")
     monkeypatch.setattr(settings, "fish_api_key", "")
 
     res = client.post("/api/voice/speak", headers=auth(token), json={"text": "hello"})
@@ -256,11 +282,11 @@ def test_unconfigured_says_so_rather_than_failing_obscurely(client, token, monke
     assert "not configured" in res.json()["detail"]
 
 
-def test_a_quota_failure_is_flagged_as_one(client, token, voice, monkeypatch):
-    """The browser stops asking on quota; it retries on a blip. It can only
-    tell them apart if the server says which happened."""
+def test_a_credit_failure_is_flagged_as_one(client, token, voice, monkeypatch):
+    """The browser stops asking on exhausted credit; it retries on a blip. It
+    can only tell them apart if the server says which happened."""
     async def out_of_credit(text, settings=None):
-        raise tts.SpeechError("ElevenLabs quota is used up.", quota=True)
+        raise tts.SpeechError("Fish Audio credits are used up.", quota=True)
         yield b""                                     # pragma: no cover
 
     monkeypatch.setattr("jarvis.api.voice.tts.stream", out_of_credit)
@@ -269,110 +295,88 @@ def test_a_quota_failure_is_flagged_as_one(client, token, voice, monkeypatch):
 
     assert res.status_code == 503
     assert res.headers.get("X-Speech-Quota") == "1"
-    assert "quota" in res.json()["detail"].lower()
+    assert "credits" in res.json()["detail"].lower()
 
 
-def test_errors_never_echo_the_remote_body_verbatim(voice):
-    error = elevenlabs._explain(401, '{"detail":"invalid api key sk-test-key-never-leaves-here"}')
-    assert "sk-test" not in str(error)
-
-
-def test_status_reports_what_is_missing(client, token, monkeypatch):
-    settings = get_settings()
-    for name in ("tts_provider", "elevenlabs_api_key", "elevenlabs_voice_id", "fish_api_key", "fish_voice_id"):
-        monkeypatch.setattr(settings, name, "")
-
-    body = client.get("/api/voice/speech-status", headers=auth(token)).json()
-    assert body["configured"] is False
-    # Nothing set at all: point at Fish, the preferred provider.
-    assert set(body["missing"]) == {"FISH_API_KEY", "FISH_VOICE_ID"}
-
-
-def test_missing_names_the_provider_closest_to_working(monkeypatch, tmp_path):
-    """A Fish key with no voice id wants FISH_VOICE_ID — not a list of every
-    variable either provider could take."""
-    settings = get_settings()
-    for name in ("tts_provider", "elevenlabs_api_key", "elevenlabs_voice_id", "fish_voice_id"):
-        monkeypatch.setattr(settings, name, "")
-    monkeypatch.setattr(settings, "fish_api_key", "k")
-    assert tts.missing(settings) == ["FISH_VOICE_ID"]
-
-    monkeypatch.setattr(settings, "fish_api_key", "")
-    monkeypatch.setattr(settings, "elevenlabs_api_key", "k")
-    assert tts.missing(settings) == ["ELEVENLABS_VOICE_ID"]
-
-
-# --------------------------------------------------------------- fish audio
-
-
-def test_fish_is_chosen_when_it_is_the_one_configured(fish_voice):
-    assert tts.provider(fish_voice) == "fish"
-    assert tts.label(fish_voice) == "Fish Audio"
-
-
-def test_fish_is_preferred_when_both_are_configured(fish_voice, monkeypatch):
-    monkeypatch.setattr(fish_voice, "elevenlabs_api_key", "k")
-    monkeypatch.setattr(fish_voice, "elevenlabs_voice_id", "v")
-    assert tts.provider(fish_voice) == "fish"
-
-    monkeypatch.setattr(fish_voice, "tts_provider", "elevenlabs")
-    assert tts.provider(fish_voice) == "elevenlabs"
-
-
-def test_forcing_an_unconfigured_provider_does_not_fall_through(fish_voice, monkeypatch):
-    """TTS_PROVIDER=elevenlabs with no ElevenLabs key must not quietly use Fish:
-    "I set ElevenLabs and it is still Fish" is the wrong surprise."""
-    monkeypatch.setattr(fish_voice, "tts_provider", "elevenlabs")
-    assert tts.provider(fish_voice) == ""
-    assert tts.configured(fish_voice) is False
-
-
-def test_the_fish_request_is_the_sdks_request(client, token, fish_voice, fake_http):
-    """Shape copied from fish-audio-sdk 1.3.0, not remembered. The model goes in
-    a header — put it in the body and Fish silently uses its default."""
-    import ormsgpack
-
-    url = client.post("/api/voice/speak", headers=auth(token), json={"text": "Good evening, sir."}).json()["url"]
-    res = client.get(url)
-    assert res.status_code == 200
-    assert res.headers["X-Speech-Source"] == "fish"
-
-    call = fake_http.calls[0]
-    assert call["url"] == "https://api.fish.audio/v1/tts"
-    assert call["headers"]["Authorization"] == "Bearer fish-test-key-never-leaves-here"
-    assert call["headers"]["Content-Type"] == "application/msgpack"
-    assert call["headers"]["model"] == "s2-pro"
-    body = ormsgpack.unpackb(call["content"])
-    assert body["text"] == "Good evening, sir."
-    assert body["reference_id"] == "802e3bc2b27e49c2995d23ef70e6ac89"
-    assert body["format"] == "mp3"
-    assert body["latency"] == "balanced"
-
-
-def test_the_fish_key_is_never_in_any_response(client, token, fish_voice, fake_http):
-    prepared = client.post("/api/voice/speak", headers=auth(token), json={"text": "Hello."})
-    audio = client.get(prepared.json()["url"])
-    status = client.get("/api/voice/speech-status", headers=auth(token))
-
-    blob = prepared.text + status.text + repr(dict(audio.headers)) + repr(dict(prepared.headers))
-    assert "fish-test-key-never-leaves-here" not in blob
-    assert "802e3bc2b27e49c2995d23ef70e6ac89" not in blob     # the voice id is a credential too
-
-
-def test_switching_provider_does_not_replay_the_old_voice_from_cache(voice, monkeypatch):
-    """The cache key carries the provider: a line rendered by ElevenLabs must
-    not be served as if Fish said it."""
-    line = tts.speakable_length("Good evening, sir.")
-    eleven_key = tts.voice_key(line, voice)
-
-    monkeypatch.setattr(voice, "fish_api_key", "k")
-    monkeypatch.setattr(voice, "fish_voice_id", "v")
-    monkeypatch.setattr(voice, "tts_provider", "fish")
-    assert tts.voice_key(line, voice) != eleven_key
-
-
-def test_fish_errors_name_the_fix_and_flag_credits():
+def test_fish_errors_name_the_fix_and_never_echo_the_body():
     assert "API key" in str(fish._explain(401, ""))
     exhausted = fish._explain(402, '{"detail":"insufficient credit"}')
     assert exhausted.quota is True
     assert "sk-" not in str(fish._explain(401, "invalid key sk-secret-thing"))
+
+
+def test_status_reports_what_is_missing(client, token, monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "fish_api_key", "")
+    monkeypatch.setattr(settings, "fish_voice_id", "")
+
+    body = client.get("/api/voice/speech-status", headers=auth(token)).json()
+    assert body["configured"] is False
+    assert body["provider"] == ""
+    assert set(body["missing"]) == {"FISH_API_KEY", "FISH_VOICE_ID"}
+
+
+def test_missing_names_only_what_is_missing(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "fish_api_key", "k")
+    monkeypatch.setattr(settings, "fish_voice_id", "")
+    assert tts.missing(settings) == ["FISH_VOICE_ID"]
+
+    monkeypatch.setattr(settings, "fish_voice_id", "   ")
+    assert tts.missing(settings) == ["FISH_VOICE_ID"], "whitespace is not a voice id"
+
+
+def test_status_names_the_provider(client, token, voice):
+    body = client.get("/api/voice/speech-status", headers=auth(token)).json()
+    assert body == {**body, "configured": True, "provider": "fish", "label": "Fish Audio", "missing": []}
+    assert "check" not in body, "no network call unless asked for one"
+
+
+# ------------------------------------------------------------------- verify
+#
+# "Configured" and "working" are different claims. verify() asks Fish, with
+# the two calls from its SDK that render nothing, so a wrong key or a
+# mistyped voice id is named at boot rather than heard as the wrong voice.
+
+
+def test_verify_accepts_a_real_key_and_a_ready_voice(client, token, voice, fake_http):
+    fake_http.gets["/wallet/self/api-credit"] = (200, {"credit": "4.20"})
+    fake_http.gets[f"/model/{VOICE}"] = (200, {"title": "Michael", "state": "ready"})
+
+    body = client.get("/api/voice/speech-status?verify=1", headers=auth(token)).json()
+    check = body["check"]
+    assert check["ok"] is True
+    assert check["voice_title"] == "Michael"
+    assert check["credit"] == 4.2
+    assert KEY not in str(body) and VOICE not in str(body)
+    # Bearer, like the SDK — and to the wallet and model endpoints, not /tts.
+    assert all(c["headers"]["Authorization"] == f"Bearer {KEY}" for c in fake_http.calls)
+    assert not any("/v1/tts" in c["url"] for c in fake_http.calls), "verify must not render audio"
+
+
+@pytest.mark.parametrize(
+    ("credit", "model", "expect"),
+    [
+        ((401, {}), (200, {"state": "ready"}), "rejected the API key"),
+        ((200, {"credit": "1"}), (404, {}), "does not exist"),
+        ((200, {"credit": "1"}), (200, {"title": "x", "state": "training"}), "not ready"),
+        ((200, {"credit": "0"}), (200, {"title": "x", "state": "ready"}), "credits are used up"),
+    ],
+)
+def test_verify_names_each_way_it_can_be_wrong(client, token, voice, fake_http, credit, model, expect):
+    fake_http.gets["/wallet/self/api-credit"] = credit
+    fake_http.gets[f"/model/{VOICE}"] = model
+
+    check = client.get("/api/voice/speech-status?verify=1", headers=auth(token)).json()["check"]
+    assert check["ok"] is False
+    assert expect in check["error"]
+
+
+def test_verify_without_configuration_does_not_call_out(client, token, monkeypatch, fake_http):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "fish_api_key", "")
+
+    check = client.get("/api/voice/speech-status?verify=1", headers=auth(token)).json()["check"]
+    assert check["ok"] is False
+    assert "not configured" in check["error"]
+    assert fake_http.calls == []

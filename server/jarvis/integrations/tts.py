@@ -1,12 +1,8 @@
-"""The cloned voice: one door, two providers behind it.
+"""The cloned voice: everything the app needs from text-to-speech.
 
-Everything the rest of the app needs from text-to-speech lives here — is a
-voice configured, what is it called, hash this line, stream it, cache it. Which
-service actually renders the audio is a detail behind `stream()`, chosen from
-the settings: Fish Audio or ElevenLabs, whichever is configured, with
-`TTS_PROVIDER` to force one when both are.
-
-The two things that must not change with the provider:
+Is a voice configured, what is it called, hash this line, stream it, cache it.
+Fish Audio renders the audio (fish.py); this module is the door in front of it
+and the two things that must hold whatever is behind that door:
 
 **The key never reaches a browser.** The browser asks this server to speak and
 the server holds the credential. A TTS key is billed per character and would be
@@ -16,10 +12,9 @@ ticket scheme that lets an <audio> element play a line without one.
 **Rendered audio is cached, by content.** The boot greeting and the canned
 confirmations are identical every time and said many times a day; re-rendering
 them is money spent to receive the same bytes back. The cache key includes the
-provider, voice and model, so switching any of them re-renders rather than
-playing the old voice out of the cache. Written through a `.part` file and
-renamed, so a stream that dies halfway cannot leave a truncated clip to be
-served forever after.
+voice and model, so switching either re-renders rather than playing the old
+voice out of the cache. Written through a `.part` file and renamed, so a stream
+that dies halfway cannot leave a truncated clip to be served forever after.
 """
 
 from __future__ import annotations
@@ -34,12 +29,15 @@ from ..config import Settings, get_settings
 
 log = logging.getLogger(__name__)
 
-# Both providers reject oversized requests, and a reply that long should have
-# been chunked before it got here anyway.
+# Fish rejects oversized requests, and a reply that long should have been
+# chunked before it got here anyway.
 MAX_CHARS = 2500
 
-PROVIDERS = ("fish", "elevenlabs")
-LABELS = {"fish": "Fish Audio", "elevenlabs": "ElevenLabs"}
+PROVIDER = "fish"
+LABEL = "Fish Audio"
+# The message the browser keys its "settled, stop asking" fallback on — see
+# speech.js, which matches /not configured/. Change both or neither.
+NOT_CONFIGURED = "The cloned voice is not configured."
 
 
 class SpeechError(RuntimeError):
@@ -47,69 +45,37 @@ class SpeechError(RuntimeError):
 
     def __init__(self, message: str, *, quota: bool = False) -> None:
         super().__init__(message)
-        # Worth distinguishing: a quota failure will keep failing until the
+        # Worth distinguishing: a credit failure will keep failing until the
         # account is topped up, and the client should stop asking rather than
         # add a doomed round trip to every sentence.
         self.quota = quota
 
 
-# ------------------------------------------------------------ which provider
-
-
-def _fish_ready(settings: Settings) -> bool:
-    return bool(settings.fish_api_key and settings.fish_voice_id)
-
-
-def _eleven_ready(settings: Settings) -> bool:
-    return bool(settings.elevenlabs_api_key and settings.elevenlabs_voice_id)
-
-
-def provider(settings: Settings | None = None) -> str:
-    """The provider that will speak, or "" if none can.
-
-    An explicit TTS_PROVIDER wins, but only if that provider is actually
-    configured — naming one with no key would silently fall through to the
-    other, and "I set Fish and it is still ElevenLabs" is the wrong surprise.
-    Without a setting, Fish is preferred when both are present, because it is
-    the one being added and the one that costs less per character.
-    """
-    settings = settings or get_settings()
-    wanted = (settings.tts_provider or "").strip().lower()
-    ready = {"fish": _fish_ready(settings), "elevenlabs": _eleven_ready(settings)}
-    if wanted in ready:
-        return wanted if ready[wanted] else ""
-    for name in PROVIDERS:
-        if ready[name]:
-            return name
-    return ""
+# ------------------------------------------------------------- configured?
 
 
 def configured(settings: Settings | None = None) -> bool:
-    return bool(provider(settings))
+    settings = settings or get_settings()
+    return bool(settings.fish_api_key.strip() and settings.fish_voice_id.strip())
+
+
+def provider(settings: Settings | None = None) -> str:
+    """The provider that will speak, or "" if none can. Kept as a name rather
+    than a bool because it travels in the X-Speech-Source header and the
+    /speak reply, where "fish" reads better than "true"."""
+    return PROVIDER if configured(settings) else ""
 
 
 def label(settings: Settings | None = None) -> str:
     """A human name for the status line: "Fish Audio", not "fish"."""
-    return LABELS.get(provider(settings), "")
+    return LABEL if configured(settings) else ""
 
 
 def missing(settings: Settings | None = None) -> list[str]:
-    """Which env vars would turn the voice on. Drives doctor and /speech-status.
-
-    Names the provider that is closest to working: if a Fish key is set but
-    the voice id is not, the answer is FISH_VOICE_ID, not a list of every
-    variable either provider could take.
-    """
+    """Which env vars would turn the voice on. Drives doctor and /speech-status."""
     settings = settings or get_settings()
-    if configured(settings):
-        return []
-    wanted = (settings.tts_provider or "").strip().lower()
-    if wanted == "elevenlabs" or (not wanted and settings.elevenlabs_api_key and not settings.fish_api_key):
-        pairs = [("ELEVENLABS_API_KEY", settings.elevenlabs_api_key),
-                 ("ELEVENLABS_VOICE_ID", settings.elevenlabs_voice_id)]
-    else:
-        pairs = [("FISH_API_KEY", settings.fish_api_key), ("FISH_VOICE_ID", settings.fish_voice_id)]
-    return [name for name, value in pairs if not value]
+    pairs = [("FISH_API_KEY", settings.fish_api_key), ("FISH_VOICE_ID", settings.fish_voice_id)]
+    return [name for name, value in pairs if not value.strip()]
 
 
 # ------------------------------------------------------------------ the cache
@@ -132,14 +98,9 @@ def speakable_length(text: str) -> str:
 
 
 def voice_key(text: str, settings: Settings | None = None) -> str:
-    """A stable id for one rendering of one line, in one voice, by one provider."""
+    """A stable id for one rendering of one line, in one voice, by one model."""
     settings = settings or get_settings()
-    name = provider(settings)
-    if name == "fish":
-        voice, model = settings.fish_voice_id, settings.fish_model
-    else:
-        voice, model = settings.elevenlabs_voice_id, settings.elevenlabs_model
-    material = f"{name}|{voice}|{model}|{text.strip()}"
+    material = f"{PROVIDER}|{settings.fish_voice_id}|{settings.fish_model}|{text.strip()}"
     return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
 
@@ -164,10 +125,8 @@ async def stream(text: str, settings: Settings | None = None) -> AsyncIterator[b
         raise SpeechError("Nothing to say.")
     if len(text) > MAX_CHARS:
         raise SpeechError(f"Too long to speak in one request ({len(text)} characters).")
-
-    name = provider(settings)
-    if not name:
-        raise SpeechError("The cloned voice is not configured.")
+    if not configured(settings):
+        raise SpeechError(NOT_CONFIGURED)
 
     key = voice_key(text, settings)
     hit = cached_path(key, settings)
@@ -179,19 +138,16 @@ async def stream(text: str, settings: Settings | None = None) -> AsyncIterator[b
                 yield chunk
         return
 
-    # Imported here, not at the top: the backends import SpeechError from this
+    # Imported here, not at the top: fish.py imports SpeechError from this
     # module, and a module-level import in both directions is a cycle.
-    if name == "fish":
-        from . import fish as backend
-    else:
-        from . import elevenlabs as backend
+    from . import fish
 
     target = cache_dir(settings) / f"{key}.mp3"
     partial = target.with_suffix(".part")
     written = 0
     handle = partial.open("wb")
     try:
-        async for chunk in backend.fetch(text, settings):
+        async for chunk in fish.fetch(text, settings):
             if not chunk:
                 continue
             written += len(chunk)
@@ -209,3 +165,15 @@ async def stream(text: str, settings: Settings | None = None) -> AsyncIterator[b
         os.replace(partial, target)
     else:
         partial.unlink(missing_ok=True)
+
+
+async def verify(settings: Settings | None = None) -> dict:
+    """Ask Fish whether the key and the voice id are real, without rendering
+    anything. Used by doctor and /speech-status?verify=1, so "it is configured"
+    and "it works" stop being the same claim."""
+    settings = settings or get_settings()
+    if not configured(settings):
+        return {"ok": False, "error": NOT_CONFIGURED, "missing": missing(settings)}
+    from . import fish
+
+    return await fish.verify(settings)

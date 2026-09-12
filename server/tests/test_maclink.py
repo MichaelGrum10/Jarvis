@@ -527,8 +527,8 @@ async def test_a_wake_event_is_transcribed_answered_and_played(monkeypatch):
     from jarvis.config import get_settings
 
     settings = get_settings()
-    monkeypatch.setattr(settings, "elevenlabs_api_key", "k")
-    monkeypatch.setattr(settings, "elevenlabs_voice_id", "v")
+    monkeypatch.setattr(settings, "fish_api_key", "k")
+    monkeypatch.setattr(settings, "fish_voice_id", "v")
 
     async def fake_transcribe(data, settings, language=""):
         return "what is on my calendar"

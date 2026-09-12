@@ -10,9 +10,10 @@ an error.
 Models, per the SDK's own type: `s1` and `s2-pro` are current; `speech-1.5`
 and `speech-1.6` are deprecated and warn. The default follows the SDK's.
 
-Only `fetch()` is public. Caching, hashing and the browser-facing ticket live
-one level up, so a provider is a function that turns text into mp3 bytes and
-nothing else.
+`fetch()` turns text into mp3 bytes. `verify()` asks Fish whether the key and
+voice are real without rendering anything — the two SDK calls that cost
+nothing: `GET /wallet/self/api-credit` and `GET /model/{id}`. Caching, hashing
+and the browser-facing ticket live one level up.
 """
 
 from __future__ import annotations
@@ -28,7 +29,8 @@ from .tts import SpeechError
 
 log = logging.getLogger(__name__)
 
-API = "https://api.fish.audio/v1/tts"
+BASE = "https://api.fish.audio"
+API = f"{BASE}/v1/tts"
 
 CONNECT_TIMEOUT = 8.0
 # Time-to-first-byte on a stream we then read incrementally; generous on purpose.
@@ -79,6 +81,57 @@ async def fetch(text: str, settings: Settings) -> AsyncIterator[bytes]:
                     yield chunk
     except httpx.HTTPError as exc:
         raise SpeechError(f"Could not reach Fish Audio: {exc}") from None
+
+
+async def verify(settings: Settings) -> dict:
+    """Is the key accepted, does the voice exist, and is it ready to speak?
+
+    Two GETs the SDK exposes as `account.get_credits()` and `voices.get()`.
+    Neither renders audio, so this is free to run from doctor on every visit.
+    The result is shaped for a status line: `ok`, one `error` string when not,
+    and whatever facts were learned along the way — never the key or the id.
+    """
+    headers = {"Authorization": f"Bearer {settings.fish_api_key}"}
+    out: dict = {"ok": False, "error": ""}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=CONNECT_TIMEOUT)) as client:
+            credit = await client.get(f"{BASE}/wallet/self/api-credit", headers=headers)
+            if credit.status_code in (401, 403):
+                out["error"] = "Fish Audio rejected the API key."
+                return out
+            if credit.status_code >= 400:
+                out["error"] = f"Fish Audio error {credit.status_code} checking the key."
+                return out
+            try:
+                out["credit"] = float(credit.json().get("credit", 0))
+            except (ValueError, TypeError, AttributeError):
+                out["credit"] = None
+
+            voice = await client.get(f"{BASE}/model/{settings.fish_voice_id.strip()}", headers=headers)
+            if voice.status_code == 404:
+                out["error"] = "That Fish Audio voice id does not exist."
+                return out
+            if voice.status_code == 403:
+                out["error"] = "Fish Audio refused that voice — is the reference id yours to use?"
+                return out
+            if voice.status_code >= 400:
+                out["error"] = f"Fish Audio error {voice.status_code} checking the voice."
+                return out
+            body = voice.json() if voice.content else {}
+            out["voice_title"] = str(body.get("title", ""))[:80]
+            out["voice_state"] = str(body.get("state", ""))
+            if out["voice_state"] and out["voice_state"] != "ready":
+                out["error"] = f"That Fish Audio voice is not ready yet (state: {out['voice_state']})."
+                return out
+    except httpx.HTTPError as exc:
+        out["error"] = f"Could not reach Fish Audio: {exc}"
+        return out
+
+    if out.get("credit") is not None and out["credit"] <= 0:
+        out["error"] = "Fish Audio credits are used up."
+        return out
+    out["ok"] = True
+    return out
 
 
 def _explain(status: int, body: str) -> SpeechError:

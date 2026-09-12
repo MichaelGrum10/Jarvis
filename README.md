@@ -236,7 +236,7 @@ you. Talking over Jarvis mid-sentence cuts him off and starts listening.
 
 The ring carries the state: cyan while listening, **amber and pulsing while it
 works**, bright while speaking, with the arc reactor in the middle tracking his
-voice. Jarvis speaks in your cloned ElevenLabs voice when it is configured, and
+voice. Jarvis speaks in your cloned Fish Audio voice when it is configured, and
 in the closest British voice the device has when it is not — and says which.
 
 Saying "Jarvis" hands-free only works on the Mac, where the companion agent

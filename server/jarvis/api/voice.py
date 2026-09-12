@@ -12,10 +12,12 @@ works in the browser it's running in:
      the browser engines.
 
 So the client tries (1) for latency and falls back to (2) for coverage.
-Text-to-speech has two paths as well. The cloned ElevenLabs voice is proxied
+Text-to-speech has two paths as well. The cloned Fish Audio voice is proxied
 through /speak and /audio here, so the API key stays on this machine; the
 browser's own speechSynthesis is the fallback when that is unconfigured, broken,
-or out of quota. The fallback is free, offline, and sends nothing anywhere.
+or out of credit. The fallback is free, offline, and sends nothing anywhere —
+and it is never silent about being the fallback, because a voice that changes
+with no explanation reads as a bug.
 """
 
 from __future__ import annotations
@@ -215,7 +217,7 @@ async def speak(device: CurrentDevice, body: Speech, settings: Settings = Depend
     if not text:
         raise HTTPException(400, "Nothing to say.")
     if not tts.configured(settings):
-        raise HTTPException(503, "The cloned voice is not configured.")
+        raise HTTPException(503, tts.NOT_CONFIGURED)
 
     key = tts.voice_key(text, settings)
     _sweep()
@@ -281,12 +283,23 @@ async def audio(key: str, t: str = "", settings: Settings = Depends(get_settings
 
 
 @router.get("/speech-status")
-async def speech_status(device: CurrentDevice, settings: Settings = Depends(get_settings)):
-    """Whether the cloned voice is available, for the status line to explain."""
-    return {
+async def speech_status(
+    device: CurrentDevice, verify: bool = False, settings: Settings = Depends(get_settings)
+):
+    """Whether the cloned voice is available, for the status line to explain.
+
+    `?verify=1` goes further and asks Fish whether the key and voice are real —
+    two free calls, no audio rendered — so "configured" and "working" are not
+    the same claim. The browser does this once at boot: the point of the
+    cloned voice is that you never hear the wrong one without being told why.
+    """
+    body = {
         "configured": tts.configured(settings),
         "provider": tts.provider(settings),
         "label": tts.label(settings),
         "missing": settings.missing_for("tts"),
         "cached_lines": len(list(tts.cache_dir(settings).glob("*.mp3"))),
     }
+    if verify:
+        body["check"] = await tts.verify(settings)
+    return body

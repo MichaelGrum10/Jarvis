@@ -196,31 +196,18 @@ class Settings(BaseSettings):
     bridge_token: str = Field("", description="Shared secret between server and Mac bridge")
     bridge_stale_minutes: int = 15
 
-    # --- the cloned voice ---
-    # Two providers, one door (integrations/tts.py). The browser never sees any
-    # of these: it asks this server to speak and the server holds the
-    # credential — a TTS key is billed per character and would be trivially
-    # scraped out of anything served to a phone.
+    # --- the cloned voice (Fish Audio) ---
+    # The browser never sees any of these: it asks this server to speak and the
+    # server holds the credential — a TTS key is billed per character and would
+    # be trivially scraped out of anything served to a phone.
     #
-    # "" picks whichever is configured, Fish first if both are. Set "fish" or
-    # "elevenlabs" to force one.
-    tts_provider: str = ""
-
-    # Fish Audio. The voice id is the model id of your cloned voice on
-    # fish.audio (the SDK calls it reference_id). s2-pro is the current model;
-    # s1 also works; speech-1.5/1.6 are deprecated upstream.
+    # The voice id is the model id of your cloned voice on fish.audio (the SDK
+    # calls it reference_id). s2-pro is the current model; s1 also works;
+    # speech-1.5/1.6 are deprecated upstream.
     fish_api_key: str = Field("", description="Fish Audio API key; never sent to a browser")
     fish_voice_id: str = Field("", description="Cloned voice id on fish.audio")
     fish_model: str = "s2-pro"
     fish_latency: str = "balanced"      # or "normal" for slightly better quality
-
-    # ElevenLabs.
-    elevenlabs_api_key: str = Field("", description="ElevenLabs API key; never sent to a browser")
-    elevenlabs_voice_id: str = Field("", description="The cloned voice to speak with")
-    # Turbo is the low-latency model, which is the point of streaming at all.
-    elevenlabs_model: str = "eleven_turbo_v2_5"
-    elevenlabs_stability: float = 0.45
-    elevenlabs_similarity: float = 0.8
 
     # Where this server is reachable from outside. Only needed so the Mac can
     # be handed an absolute URL for a clip to play — everything else is relative.

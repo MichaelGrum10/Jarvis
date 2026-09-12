@@ -635,6 +635,43 @@ async def check_voice(report: Report) -> None:
     report.ok("Wake word", f"{settings.wake_word!r}" + ("" if settings.require_wake_word else " (optional)"))
 
 
+async def check_speech(report: Report) -> None:
+    """The cloned voice, actually asked rather than merely configured.
+
+    A key that is set but wrong, a voice id copied with a stray character, or an
+    account with no credit all present the same way to a listener: Jarvis
+    speaks in the browser's voice instead of yours. Doctor asks Fish directly,
+    so the reason is on this screen rather than in a status line on a phone.
+    """
+    header("Cloned voice")
+    from .integrations import tts
+
+    settings = get_settings()
+    if not tts.configured(settings):
+        report.warn(
+            "Fish Audio", f"not configured — missing {', '.join(tts.missing(settings))}",
+            "bash scripts/setkey.sh FISH_API_KEY <key> && bash scripts/setkey.sh FISH_VOICE_ID <voice id>\n"
+            "Jarvis uses the browser's own voice until then, and says so.",
+        )
+        return
+
+    report.ok("Fish key", mask(settings.fish_api_key))
+    report.ok("Fish voice id", mask(settings.fish_voice_id))
+    report.ok("Fish model", settings.fish_model)
+
+    check = await tts.verify(settings)
+    if not check.get("ok"):
+        report.bad("Fish Audio", check.get("error") or "failed", "Fix the value above and re-run.")
+        return
+    facts = []
+    if check.get("voice_title"):
+        facts.append(f"voice “{check['voice_title']}”")
+    if check.get("credit") is not None:
+        facts.append(f"{check['credit']:.2f} credit")
+    report.ok("Fish Audio", "key and voice accepted" + (f" — {', '.join(facts)}" if facts else ""))
+    report.ok("Cached lines", str(len(list(tts.cache_dir(settings).glob("*.mp3")))))
+
+
 async def main() -> int:
     print(f"{BOLD}Jarvis doctor{RESET}")
     print(f"{DIM}Secrets are masked below — output is safe to share.{RESET}")
@@ -646,6 +683,7 @@ async def main() -> int:
     await check_calendar(report)
     await check_messages(report)
     await check_voice(report)
+    await check_speech(report)
     check_browser(report)
     check_notes(report)
     await check_outbound(report)

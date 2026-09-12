@@ -8,14 +8,14 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=21';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=21';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=21';
-import { initPanels, resetLayout } from '/static/panels.js?v=21';
-import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned } from '/static/speech.js?v=21';
-import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=21';
+import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=22';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=22';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=22';
+import { initPanels, resetLayout } from '/static/panels.js?v=22';
+import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned, unlockAudio } from '/static/speech.js?v=22';
+import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=22';
 import { initReactor, reactorAnalyse, reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
-  from '/static/reactor.js?v=21';
+  from '/static/reactor.js?v=22';
 
 const API = '';
 const store = {
@@ -112,7 +112,7 @@ async function enterApp() {
   $('login').classList.add('hidden');
   $('app').classList.remove('hidden');
   $('status-dot').classList.add('on');
-  refreshIdentity().then(startHud);
+  refreshIdentity().then(startHud).then(checkClonedVoice);
   loadConversations();
   requestLocation();
   commandTimer = setInterval(pollCommands, 4000);
@@ -759,7 +759,7 @@ function setHudState(state, status) {
  * Every spoken reply goes through here — the HUD's and the galaxy's — so the
  * reactor never has to guess whether Jarvis is talking.
  */
-function speakWithReactor(text, { onStart, onEnd } = {}) {
+function speakWithReactor(text, { onStart, onEnd, interruptible = true } = {}) {
   speakOut(text, {
     onStart: ({ source } = {}) => {
       // The cloned voice is audio we own, so the reactor reads its actual
@@ -767,7 +767,7 @@ function speakWithReactor(text, { onStart, onEnd } = {}) {
       // reconstructs an envelope from the words instead.
       if (source === 'cloned') reactorState('speaking');
       else reactorSpeaking(text, 0.96);
-      armInterrupt();
+      if (interruptible) armInterrupt();
       onStart?.();
     },
     onEnd: () => {
@@ -796,6 +796,41 @@ function armInterrupt() {
   armBargeIn(reactorUnlock(), { interrupt }).then((armed) => {
     $('mic-armed').classList.toggle('hidden', !armed);
   });
+}
+
+/** The cloned voice is not what is speaking; say why, in both places. */
+function voiceProblem(why) {
+  if (!why) return;
+  const reason = String(why).replace(/\.$/, '');
+  setHudState($('hud').dataset.state || 'idle', `${reason} — using the browser voice`);
+  hudAlert(`${reason}. Falling back to the browser's voice.`);
+}
+
+/** Ask, at boot, whether the Fish voice is real — not just whether it is set.
+ *
+ * A wrong key or a mistyped voice id would otherwise only surface as "some
+ * other voice" on the first reply, with the reason in a status line nobody is
+ * looking at yet. The check costs nothing: two lookups, no audio rendered.
+ */
+async function checkClonedVoice() {
+  let status;
+  try {
+    status = await api('/api/voice/speech-status?verify=1');
+  } catch {
+    return;   // the first spoken line will report its own failure
+  }
+  if (!status.configured) {
+    disableCloned(`Fish Audio voice not set up (missing ${(status.missing || []).join(', ')})`);
+    return;
+  }
+  if (status.check && !status.check.ok) {
+    // A settled reason — wrong key, no such voice, no credit — switches the
+    // cloned voice off for the session. A Fish outage does not: each line
+    // retries and speaks up if it fails.
+    const reason = status.check.error || 'Fish Audio check failed';
+    if (/rejected|does not exist|credits|not ready/i.test(reason)) disableCloned(reason);
+    else voiceProblem(reason);
+  }
 }
 
 function hudAlert(message) {
@@ -1283,12 +1318,18 @@ function showVoicePicker() {
       </div>
     </div>`).join('');
 
-  showModal('Voice', `
-    <p class="muted">JARVIS is British, male and unhurried. On Apple devices
-    <strong>Daniel</strong> is the closest match. This is not the voice from the
-    films — nothing free is — but a premium British voice installed via
-    Settings → Accessibility → Spoken Content gets noticeably closer.</p>
-    <div class="card">${options}</div>`);
+  // These are the device's voices — the fallback, never the voice itself. Say
+  // which one is speaking right now, so a picker for the fallback is not
+  // mistaken for a picker for Jarvis.
+  const cloned = speechSource();
+  const intro = cloned.source === 'cloned'
+    ? `<p class="muted">Jarvis speaks in your <strong>Fish Audio</strong> voice.
+       The voices below are only the fallback, used if that voice cannot be
+       reached — and he says so in the status line when it happens.</p>`
+    : `<p class="muted">The Fish Audio voice is off right now
+       (${esc(cloned.reason)}), so one of these is speaking instead. On Apple
+       devices <strong>Daniel</strong> is the closest match.</p>`;
+  showModal('Fallback voice', `${intro}<div class="card">${options}</div>`);
 
   document.querySelectorAll('[data-try]').forEach((b) => {
     b.onclick = () => {
@@ -1355,11 +1396,7 @@ initSpeech({
   analyse: (el) => reactorAnalyse(el),
   fallback: (line, hooks) => jarvis.speak(line, { ...hooks, onBoundary: reactorBoundary }),
   // A voice that changes with no explanation reads as a bug, so say why.
-  onStatus: (why) => {
-    if (!why) return;
-    setHudState($('hud').dataset.state || 'idle', `${why} — using the browser voice`);
-    hudAlert(`${why}. Falling back to the browser's voice.`);
-  },
+  onStatus: voiceProblem,
 });
 
 initGalaxy({
@@ -1429,7 +1466,9 @@ function armAudioUnlock() {
   // The AudioContext rides the same gesture. iOS refuses to start one outside
   // a user interaction and refuses silently, so it has to happen here or the
   // analyser path is dead on arrival on the device that needs it most.
-  const prime = () => { unlockSpeech(); reactorUnlock(); };
+  // Three unlocks, one tap: the browser's synthesiser, the <audio> element the
+  // cloned voice plays through, and the AudioContext the reactor listens on.
+  const prime = () => { unlockSpeech(); unlockAudio(); reactorUnlock(); };
   for (const evt of ['pointerdown', 'touchstart', 'click', 'keydown']) {
     window.addEventListener(evt, prime, { capture: true, once: true, passive: true });
   }
@@ -1507,8 +1546,13 @@ function showWakeGate() {
     // Order matters: unlock inside the gesture, and only then speak. Speaking
     // first is the mistake that leaves Safari mute for the whole session.
     unlockSpeech();
+    unlockAudio();
     gate.classList.add('hidden');
-    jarvis.speak(line.textContent);
+    // Through the cloned voice like every other line — this used to call the
+    // browser's synthesiser directly, so the first thing you ever heard was
+    // the device's voice, whatever was configured. Not interruptible: the mic
+    // is not asked for on the very first tap.
+    speakWithReactor(line.textContent, { interruptible: false });
   };
   gate.addEventListener('click', wake, { once: true });
   gate.addEventListener('touchend', wake, { once: true });
