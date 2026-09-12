@@ -37,38 +37,71 @@ benchmark answers this, and nothing else does.
 
 ---
 
-## Wiring it in
+## Running it here
+
+OmniRoute is a service in this project's `docker-compose.yml`, on the
+`omniroute` profile, so it starts, restarts and updates with everything else.
+One command installs it and wires it in:
+
+```bash
+cd ~/Jarvis
+bash scripts/omniroute.sh
+```
+
+That generates the three secrets it requires, asks for a dashboard password
+(or generates one and shows it once), starts the container, waits until it
+answers, sets the custom slot to `http://omniroute:20128/v1` with model
+`auto`, and hands OmniRoute every provider key already in `.env` — Groq,
+Gemini and the rest — through its management API, so nothing is re-pasted.
 
 Jarvis needs no code change — the custom provider slot exists for exactly this.
+All three of its values are required; a half-configured slot is ignored rather
+than building an endpoint that fails every request, and `scripts/omniroute.sh
+status` and doctor both say so.
 
-1. Install and start OmniRoute per its own documentation. It serves an
-   OpenAI-compatible API on port **20128** by default. (Its install command is
-   not reproduced here, because a stale one is worse than none — three of the
-   endpoints hardcoded in this project went out of date during a single day.)
+**Its dashboard is on the server's loopback only.** Nothing about OmniRoute is
+reachable from the internet — deliberately, because its API-key requirement is
+off, and that is the only thing between the world and an anonymous LLM proxy.
+Reach it over an SSH tunnel from the Mac:
 
-2. If it runs on the same host, reach it from the container by IP rather than
-   `localhost` — inside the container that is the container:
+```bash
+ssh -N -L 20128:127.0.0.1:20128 ubuntu@<server ip>
+```
 
-   ```bash
-   cd ~/Jarvis
-   bash scripts/setkey.sh CUSTOM_BASE_URL http://172.17.0.1:20128/v1
-   bash scripts/setkey.sh CUSTOM_API_KEY whatever-omniroute-expects
-   bash scripts/setkey.sh CUSTOM_MODEL a-model-from-its-catalogue
-   docker compose up -d
-   ```
+then `http://localhost:20128` in a browser. Its first-run wizard offers **Set up
+free providers** — the keyless ones (OpenCode Free, Pollinations, Kiro) that
+make `auto` answer with no account anywhere. Anything OAuth-based is added from
+the same screen; the callback goes to `localhost:20128`, which through the
+tunnel is the server.
 
-   All three are required; a half-configured slot is ignored rather than
-   building an endpoint that fails every request.
+Two facts about it, from its own source rather than its README, because they
+decide whether this deployment is sound:
 
-3. Measure it before trusting it:
+- **Redis is optional.** Without one it says so once and rate-limits in memory.
+  One process on one host does not need the shared store.
+- **A wrong bearer key is ignored, not rejected, while `REQUIRE_API_KEY` is
+  off.** The pool sends a placeholder; the loopback binding is the security.
 
-   ```bash
-   docker compose exec jarvis python -m jarvis.benchmark
-   ```
+### Measure it before trusting it
 
-   Look at the `custom:` row. Tool calling at full size is the only thing that
-   matters — a model that answers beautifully and fumbles tool calls is useless
-   here, and that is most of what this assistant does.
+```bash
+docker compose exec jarvis python -m jarvis.doctor      # is it reachable from inside?
+docker compose exec jarvis python -m jarvis.benchmark   # can it do the actual job?
+```
+
+In the benchmark, look at the `custom:` rows. Tool calling at full size is the
+only thing that matters — a model that answers beautifully and fumbles tool
+calls is useless here, and that is most of what this assistant does. `auto`
+routes by OmniRoute's own scoring; `auto/coding` or a named `provider/model`
+can be set with `bash scripts/omniroute.sh model …` if `auto` picks badly.
+
+### Other commands
+
+    bash scripts/omniroute.sh status     running? reachable? wired?
+    bash scripts/omniroute.sh seed       re-hand it the keys in .env
+    bash scripts/omniroute.sh logs       its container log
+    bash scripts/omniroute.sh off        stop and unwire; its data volume is kept
+    bash scripts/omniroute.sh URL MODEL  an OmniRoute running somewhere else
 
 ---
 

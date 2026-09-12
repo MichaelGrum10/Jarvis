@@ -239,6 +239,11 @@ works**, bright while speaking, with the arc reactor in the middle tracking his
 voice. Jarvis speaks in your cloned Fish Audio voice when it is configured, and
 in the closest British voice the device has when it is not — and says which.
 
+**More capacity, one command.** `bash scripts/omniroute.sh` runs
+[OmniRoute](https://github.com/diegosouzapw/OmniRoute) as a sidecar — a local
+gateway in front of a large catalogue of free providers — and puts it behind the
+pool as the fallback for when your own keys are spent. See `docs/omniroute.md`.
+
 Saying "Jarvis" hands-free only works on the Mac, where the companion agent
 listens locally; no browser can keep a microphone open, and the app says so
 rather than pretending.

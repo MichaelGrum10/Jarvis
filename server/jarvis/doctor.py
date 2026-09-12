@@ -506,6 +506,62 @@ def check_config(report: Report) -> None:
         report.bad(f"  {blocker['what']}", "self-improvement can't run", blocker["fix"])
 
 
+async def check_custom(report: Report) -> None:
+    """The custom endpoint, asked rather than merely configured.
+
+    This is where OmniRoute plugs in (docs/omniroute.md). Its container can be
+    stopped, still starting, or answering on a port the Jarvis container cannot
+    see — and every one of those looks identical from .env. So ask it for its
+    model list, from inside this container, which is the only vantage point
+    that matters.
+    """
+    settings = get_settings()
+    if not (settings.custom_base_url and settings.custom_api_key and settings.custom_model):
+        return   # absent or half-configured; check_config already said which
+    header("Custom endpoint")
+
+    import httpx
+
+    base = settings.custom_base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{base}/models", headers={"Authorization": f"Bearer {settings.custom_api_key}"}
+            )
+    except httpx.HTTPError as exc:
+        report.bad(
+            "Reachability", f"{base}/models: {exc}",
+            "bash scripts/omniroute.sh status\n"
+            "If OmniRoute runs on this host, the container reaches it as http://omniroute:20128/v1,\n"
+            "never as localhost — inside the container that is the container.",
+        )
+        return
+
+    if response.status_code == 401:
+        report.bad("Authentication", f"{base} rejected CUSTOM_API_KEY",
+                   "With OmniRoute's REQUIRE_API_KEY off any key works; otherwise create one in its dashboard → Endpoints.")
+        return
+    if response.status_code >= 400:
+        report.bad("API", f"{base}/models answered HTTP {response.status_code}")
+        return
+
+    try:
+        ids = [m.get("id", "") for m in response.json().get("data", [])]
+    except (ValueError, AttributeError):
+        ids = []
+    wanted = [m.strip() for m in settings.custom_model.split(",") if m.strip()]
+    report.ok("Reachable", f"{base} lists {len(ids)} models")
+    # "auto" and its variants are OmniRoute's routing aliases, which need not
+    # appear in the catalogue to work.
+    unlisted = [m for m in wanted if m not in ids and not m.startswith("auto")]
+    if ids and unlisted:
+        report.warn("Model", f"not in its list: {', '.join(unlisted)}",
+                    "bash scripts/omniroute.sh model <one it lists, or auto>")
+    else:
+        report.ok("Model", ", ".join(wanted))
+    report.ok("Measured?", "docker compose exec jarvis python -m jarvis.benchmark — look at the custom: rows")
+
+
 def check_browser(report: Report) -> None:
     header("Browser reader")
     import datetime as when
@@ -682,6 +738,7 @@ async def main() -> int:
     report = Report()
     check_config(report)
     await check_groq(report)
+    await check_custom(report)
     await check_mail(report)
     await check_calendar(report)
     await check_messages(report)

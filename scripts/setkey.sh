@@ -59,7 +59,14 @@ if not source.is_file():
 fields = {m.upper() for m in re.findall(r"^    ([a-z][a-z0-9_]*)\s*:", source.read_text(), re.M)}
 # Read by docker-compose's own interpolation rather than by pydantic, so they
 # are absent from config.py and still perfectly real.
-fields |= {"NOTES_HOST_DIR"}
+fields |= {
+    "NOTES_HOST_DIR",
+    # The OmniRoute sidecar (scripts/omniroute.sh): its profile switch and the
+    # secrets docker-compose.yml hands it under its own names.
+    "COMPOSE_PROFILES",
+    "OMNIROUTE_JWT_SECRET", "OMNIROUTE_API_KEY_SECRET",
+    "OMNIROUTE_PASSWORD", "OMNIROUTE_WS_BRIDGE_SECRET",
+}
 name = os.environ["NAME"]
 if not fields or name in fields:
     sys.exit(0)
