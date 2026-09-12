@@ -3,6 +3,7 @@
 #
 #   bash scripts/omniroute.sh                 # install: start it here, wire it in
 #   bash scripts/omniroute.sh seed            # hand it the Groq/Gemini keys Jarvis already has
+#   bash scripts/omniroute.sh free            # add the keyless free providers (free all: every one)
 #   bash scripts/omniroute.sh status          # running? reachable? wired?
 #   bash scripts/omniroute.sh logs            # its container log
 #   bash scripts/omniroute.sh model auto/fast # change which of its models Jarvis asks for
@@ -131,23 +132,30 @@ status() {
 # after a login with the dashboard password; the keys travel only between two
 # processes on this machine.
 
-seed() {
-  local password jar body result added=0 name key label
+# Log in to OmniRoute's management API with the dashboard password. The
+# session cookie lands in $JAR for the calls that follow.
+login() {
+  local password body result
   password="$(current OMNIROUTE_PASSWORD)"
   [ -n "$password" ] || fail "OMNIROUTE_PASSWORD is not set — run: bash scripts/omniroute.sh"
   wait_for_it || fail "OmniRoute is not answering on $HOST_URL — bash scripts/omniroute.sh logs"
 
-  JAR="$(mktemp)"; jar="$JAR"
+  JAR="$(mktemp)"
   body="$(PW="$password" python3 -c 'import json,os; print(json.dumps({"password": os.environ["PW"]}))')"
-  result="$(curl -sS -m 15 -c "$jar" -X POST "$HOST_URL/api/auth/login" \
+  result="$(curl -sS -m 15 -c "$JAR" -X POST "$HOST_URL/api/auth/login" \
     -H 'Content-Type: application/json' -d "$body" 2>&1)" || fail "Could not log in to OmniRoute: $result"
-  if ! grep -q . "$jar"; then
+  if ! grep -q . "$JAR"; then
     printf "${RED}Login did not produce a session.${RESET} OmniRoute said:\n"
     printf "${DIM}%s${RESET}\n" "$(printf '%s' "$result" | head -c 300)"
     note "If the password was changed in its dashboard, update it here too:"
     note "  bash scripts/setkey.sh OMNIROUTE_PASSWORD …"
     exit 1
   fi
+}
+
+seed() {
+  local jar body result added=0 name key label
+  login; jar="$JAR"
 
   # Left is OmniRoute's provider id, right is the .env name Jarvis reads. Both
   # sides see the key: Jarvis's own pool directly, OmniRoute through here.
@@ -170,6 +178,69 @@ seed() {
   rm -f /tmp/omniroute-seed-body
   [ "$added" -gt 0 ] && note "OmniRoute now routes across those as well as its own free providers."
   return 0
+}
+
+# ------------------------------------------------------------------- free
+#
+# The keyless providers — the ones that make `auto` answer with no account
+# anywhere. The dashboard's first-run wizard offers this as a card, but the
+# wizard hides itself once a password is set, which it is from the moment this
+# script installs. The card is one API call; this is that call.
+
+# Keyless providers OmniRoute's own catalogue flags for terms-of-service
+# reasons. Left out unless asked for with `free all`.
+AVOID="kiro opencode"
+
+free_providers() {
+  local want_all="${1:-}" listing chosen body result
+  login
+  listing="$(curl -sS -m 20 -b "$JAR" "$HOST_URL/api/providers/free-onboarding" 2>&1)" \
+    || fail "Could not list free providers: $listing"
+
+  chosen="$(printf '%s' "$listing" | AVOID="$AVOID" ALL="$want_all" python3 -c '
+import json, os, sys
+try:
+    providers = json.load(sys.stdin).get("providers", [])
+except Exception:
+    print("Unexpected reply from OmniRoute", file=sys.stderr); sys.exit(1)
+avoid = set(os.environ["AVOID"].split())
+pick = []
+for p in providers:
+    pid = p.get("id", "")
+    name = p.get("name") or pid
+    caution = (p.get("caution") or "").strip().replace("\n", " ")
+    skip = pid in avoid and not os.environ["ALL"]
+    mark = "  (skipped: terms-of-service flag; `free all` includes it)" if skip else ""
+    print("  " + ("-" if skip else "+") + f" {name} [{pid}]{mark}", file=sys.stderr)
+    if caution:
+        print(f"      {caution[:160]}", file=sys.stderr)
+    if not skip:
+        pick.append(pid)
+if not providers:
+    print("  (none left to set up — all eligible free providers are already configured)", file=sys.stderr)
+print(",".join(pick))
+')"
+  [ -n "$chosen" ] || { note "Nothing to add."; return 0; }
+
+  say "Setting up: $chosen"
+  body="$(IDS="$chosen" python3 -c 'import json,os; print(json.dumps({"providerIds": os.environ["IDS"].split(","), "confirmed": True}))')"
+  result="$(curl -sS -m 90 -b "$JAR" -X POST "$HOST_URL/api/providers/free-onboarding" \
+    -H 'Content-Type: application/json' -d "$body" 2>&1)" || fail "Setup call failed: $result"
+  printf '%s' "$result" | python3 -c '
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    print("Unexpected reply:", sys.stdin.read()[:300]); sys.exit(1)
+if "error" in data:
+    print("OmniRoute refused:", data["error"]); sys.exit(1)
+for r in data.get("results", []):
+    status = r.get("status", "?")
+    extra = " — " + str(r.get("reason")) if r.get("reason") else ""
+    icon = {"created": "\033[32m✓\033[0m", "skipped": "\033[2m·\033[0m", "failed": "\033[31m✗\033[0m"}.get(status, "?")
+    print("  " + icon + " " + str(r.get("providerId")) + ": " + status + extra)
+'
+  note "auto now routes across these as well as your keyed providers. Measure:  bash scripts/bestmodels.sh"
 }
 
 # ---------------------------------------------------------------- install
@@ -220,11 +291,14 @@ install() {
   seed || true
 
   echo
-  say "Next: open its dashboard, once, to connect free providers"
+  say "Adding the keyless free providers"
+  free_providers || true
+
+  echo
+  say "Its dashboard, if you ever want it"
   note "It is on this machine's loopback only. From your Mac:"
   printf "  ssh -N -L 20128:127.0.0.1:20128 %s@%s\n" "$(whoami)" "$(server_name)"
   note "then http://localhost:20128 in a browser, password as above."
-  note "Its first-run wizard offers 'Set up free providers' — accept the ones you want."
   echo
   note "Then measure it before trusting it:"
   note "  docker compose exec jarvis python -m jarvis.benchmark      look at the custom: rows"
@@ -253,6 +327,7 @@ off() {
 case "${1:-}" in
   status) status ;;
   seed) seed ;;
+  free) free_providers "${2:-}" ;;
   logs) docker compose logs --tail 80 omniroute ;;
   off) off ;;
   model)
@@ -278,5 +353,5 @@ case "${1:-}" in
     status || true
     ;;
   *)
-    fail "Unknown command: $1   (install | seed | status | logs | model NAME | off | URL MODEL [KEY])" ;;
+    fail "Unknown command: $1   (install | seed | free | status | logs | model NAME | off | URL MODEL [KEY])" ;;
 esac

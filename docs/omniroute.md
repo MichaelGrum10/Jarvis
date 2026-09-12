@@ -68,11 +68,16 @@ Reach it over an SSH tunnel from the Mac:
 ssh -N -L 20128:127.0.0.1:20128 ubuntu@<server ip>
 ```
 
-then `http://localhost:20128` in a browser. Its first-run wizard offers **Set up
-free providers** — the keyless ones (OpenCode Free, Pollinations, Kiro) that
-make `auto` answer with no account anywhere. Anything OAuth-based is added from
-the same screen; the callback goes to `localhost:20128`, which through the
-tunnel is the server.
+then `http://localhost:20128` in a browser. You should rarely need it: the
+keyless free providers are added by the install (and by `bash
+scripts/omniroute.sh free` any time), keyed ones by `seed`. The dashboard's
+own "Set up free providers" card lives in a first-run wizard that hides itself
+once a password is set, which it is from the moment this script installs — the
+card is one API call, and `free` is that call. Two keyless providers OmniRoute's
+own catalogue flags for terms-of-service reasons (Kiro, OpenCode Free) are left
+out unless you ask with `free all`. Anything OAuth-based is added from the
+dashboard's Providers page; the callback goes to `localhost:20128`, which
+through the tunnel is the server.
 
 Two facts about it, from its own source rather than its README, because they
 decide whether this deployment is sound:
@@ -99,6 +104,7 @@ can be set with `bash scripts/omniroute.sh model …` if `auto` picks badly.
 
     bash scripts/omniroute.sh status     running? reachable? wired?
     bash scripts/omniroute.sh seed       re-hand it the keys in .env
+    bash scripts/omniroute.sh free       add the keyless free providers (free all: every one)
     bash scripts/omniroute.sh logs       its container log
     bash scripts/omniroute.sh off        stop and unwire; its data volume is kept
     bash scripts/omniroute.sh URL MODEL  an OmniRoute running somewhere else
