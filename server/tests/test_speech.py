@@ -339,9 +339,12 @@ def test_status_names_the_provider(client, token, voice):
 # mistyped voice id is named at boot rather than heard as the wrong voice.
 
 
-def test_verify_accepts_a_real_key_and_a_ready_voice(client, token, voice, fake_http):
+def test_verify_accepts_a_real_key_and_a_trained_voice(client, token, voice, fake_http):
+    """Fish's states are created/training/trained/failed — "trained" is the
+    usable one. The first real check against Fish reported a working voice as
+    not ready because this expected "ready", which Fish never says."""
     fake_http.gets["/wallet/self/api-credit"] = (200, {"credit": "4.20"})
-    fake_http.gets[f"/model/{VOICE}"] = (200, {"title": "Michael", "state": "ready"})
+    fake_http.gets[f"/model/{VOICE}"] = (200, {"title": "Michael", "state": "trained"})
 
     body = client.get("/api/voice/speech-status?verify=1", headers=auth(token)).json()
     check = body["check"]
@@ -357,10 +360,12 @@ def test_verify_accepts_a_real_key_and_a_ready_voice(client, token, voice, fake_
 @pytest.mark.parametrize(
     ("credit", "model", "expect"),
     [
-        ((401, {}), (200, {"state": "ready"}), "rejected the API key"),
+        ((401, {}), (200, {"state": "trained"}), "rejected the API key"),
         ((200, {"credit": "1"}), (404, {}), "does not exist"),
-        ((200, {"credit": "1"}), (200, {"title": "x", "state": "training"}), "not ready"),
-        ((200, {"credit": "0"}), (200, {"title": "x", "state": "ready"}), "credits are used up"),
+        ((200, {"credit": "1"}), (200, {"title": "x", "state": "training"}), "still training"),
+        ((200, {"credit": "1"}), (200, {"title": "x", "state": "created"}), "still training"),
+        ((200, {"credit": "1"}), (200, {"title": "x", "state": "failed"}), "failed to train"),
+        ((200, {"credit": "0"}), (200, {"title": "x", "state": "trained"}), "credits are used up"),
     ],
 )
 def test_verify_names_each_way_it_can_be_wrong(client, token, voice, fake_http, credit, model, expect):

@@ -315,6 +315,8 @@ and in a banner. The reasons, and what each one means:
 | *Fish Audio voice not set up (missing …)* | `.env` lacks one of the two values on the server. `bash scripts/setkey.sh FISH_API_KEY …` and `FISH_VOICE_ID …`, then `docker compose up -d`. |
 | *Fish Audio rejected the API key* | The key is wrong or revoked. |
 | *That Fish Audio voice id does not exist* | The id is mistyped, or is not the model id (it is the hex string on the voice's page). |
+| *That Fish Audio voice is still training* | Fish reports the clone as `created` or `training`; a usable one is `trained`. Wait, then reload. |
+| *That Fish Audio voice failed to train* | Fish gave up on the clone. Re-clone it and set the new id. |
 | *Fish Audio credits are used up* | Top up on fish.audio. The cloned voice stays off for the session; reload after. |
 | *The phone blocked playback until you tap the screen* | iOS only lets audio play after a tap on this page. Tap once; the next line is his. |
 | *The cloned voice stopped mid-sentence* | The stream died. The next line retries. |

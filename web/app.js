@@ -8,14 +8,14 @@
  *  - render tool results as cards instead of walls of JSON.
  */
 
-import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=22';
-import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=22';
-import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=22';
-import { initPanels, resetLayout } from '/static/panels.js?v=22';
-import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned, unlockAudio } from '/static/speech.js?v=22';
-import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=22';
+import { Listener, Speaker, voiceSupport, unlockSpeech, IS_WEBKIT } from '/static/voice.js?v=23';
+import { WakeListener, captureUtterance, JarvisVoice, pickJarvisVoice, startHudPanels } from '/static/hud.js?v=23';
+import { initGalaxy, openGalaxy, galaxyFlyTo, galaxyIsOpen, galaxyInvalidate } from '/static/galaxy.js?v=23';
+import { initPanels, resetLayout } from '/static/panels.js?v=23';
+import { initSpeech, speakOut, stopSpeaking, speechSource, disableCloned, unlockAudio } from '/static/speech.js?v=23';
+import { armBargeIn, disarmBargeIn, bargeInActive } from '/static/bargein.js?v=23';
 import { initReactor, reactorAnalyse, reactorBoundary, reactorSilent, reactorSpeaking, reactorUnlock, setState as reactorState }
-  from '/static/reactor.js?v=22';
+  from '/static/reactor.js?v=23';
 
 const API = '';
 const store = {
@@ -828,7 +828,7 @@ async function checkClonedVoice() {
     // cloned voice off for the session. A Fish outage does not: each line
     // retries and speaks up if it fails.
     const reason = status.check.error || 'Fish Audio check failed';
-    if (/rejected|does not exist|credits|not ready/i.test(reason)) disableCloned(reason);
+    if (/rejected|does not exist|credits|failed to train/i.test(reason)) disableCloned(reason);
     else voiceProblem(reason);
   }
 }

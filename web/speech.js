@@ -196,7 +196,7 @@ async function explainFailure(fallbackWhy) {
     const check = status?.check;
     if (check && !check.ok && check.error) {
       const why = String(check.error).replace(/\.$/, '');
-      if (/rejected|does not exist|credits|not ready|not configured/i.test(why)) disableCloned(why);
+      if (/rejected|does not exist|credits|failed to train|not configured/i.test(why)) disableCloned(why);
       return why;
     }
   } catch { /* fall through to the generic reason */ }

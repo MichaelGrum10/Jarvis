@@ -120,8 +120,13 @@ async def verify(settings: Settings) -> dict:
             body = voice.json() if voice.content else {}
             out["voice_title"] = str(body.get("title", ""))[:80]
             out["voice_state"] = str(body.get("state", ""))
-            if out["voice_state"] and out["voice_state"] != "ready":
-                out["error"] = f"That Fish Audio voice is not ready yet (state: {out['voice_state']})."
+            # The SDK's ModelState: created, training, trained, failed. A
+            # usable voice is "trained" — there is no "ready".
+            if out["voice_state"] == "failed":
+                out["error"] = "That Fish Audio voice failed to train — re-clone it on fish.audio."
+                return out
+            if out["voice_state"] in ("created", "training"):
+                out["error"] = f"That Fish Audio voice is still training (state: {out['voice_state']})."
                 return out
     except httpx.HTTPError as exc:
         out["error"] = f"Could not reach Fish Audio: {exc}"
