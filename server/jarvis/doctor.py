@@ -459,6 +459,14 @@ def check_config(report: Report) -> None:
         elif value:
             blank.append(name)
     report.ok("Provider keys", ", ".join(configured) or "none")
+    if settings.provider_order.strip():
+        report.ok("Provider order", f"{settings.provider_order} (measured — bash scripts/bestmodels.sh)")
+    else:
+        report.ok("Provider order", f"{settings.primary_provider} first, the rest as configured",)
+        report.warn(
+            "Provider order", "never measured",
+            "bash scripts/bestmodels.sh       puts the providers that pass a full-size tool call first",
+        )
     if blank:
         report.warn(
             "Empty keys", f"set but blank: {', '.join(blank)}",

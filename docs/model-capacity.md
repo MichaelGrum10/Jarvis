@@ -252,6 +252,23 @@ docker compose up -d
 That moves Gemini's endpoints to the front and Groq becomes the fallback. Each
 provider keeps its own best-first model order.
 
+### Or let the measurements decide
+
+```bash
+bash scripts/bestmodels.sh            # measure every provider, apply the order
+bash scripts/bestmodels.sh weekly     # and keep doing it every Monday
+```
+
+The benchmark already sends every configured provider the requests this
+assistant actually sends. This takes its answer — the providers that pass a
+full-size tool-calling turn first, fastest first, then the ones that manage only
+the small tool test, and nothing that failed — and writes it to
+`PROVIDER_ORDER`, which is the whole sequence rather than just who goes first.
+`weekly` adds one crontab line so the order tracks the free tiers as they
+change, which they do: models are renamed, quotas cut, tiers withdrawn. A
+provider that fails a run is not deleted, only moved behind the ones that
+passed; it comes back the week it recovers.
+
 Check the resulting order any time:
 
 ```bash

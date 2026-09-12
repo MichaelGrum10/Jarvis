@@ -336,6 +336,25 @@ def test_primary_provider_preserves_ladder_order_within_a_provider():
     assert groq_models == ["model-a", "model-b"]
 
 
+def test_provider_order_sets_the_whole_sequence():
+    """PROVIDER_ORDER is what scripts/bestmodels.sh writes: every provider in
+    measured order. It replaces PRIMARY_PROVIDER, and providers it does not
+    name keep their place after the named ones."""
+    pool = build_pool(settings(
+        gemini_api_key="AIza", openrouter_api_key="sk-or-x",
+        primary_provider="groq", provider_order="gemini,groq",
+    ))
+    providers = [e.label.split(":", 1)[0] for e in pool.endpoints]
+    assert providers[0] == "gemini"
+    assert providers.index("groq") < providers.index("openrouter"), "unnamed providers go last"
+    assert [e.model for e in pool.endpoints if e.label.startswith("groq:")] == ["model-a", "model-b"]
+
+
+def test_provider_order_naming_a_missing_provider_is_not_fatal():
+    pool = build_pool(settings(provider_order="nonexistent,groq"))
+    assert pool.endpoints[0].label.startswith("groq:")
+
+
 def test_unconfigured_primary_is_ignored_not_fatal():
     """Naming a provider you never set up shouldn't take the assistant down."""
     pool = build_pool(settings(primary_provider="nonexistent"))

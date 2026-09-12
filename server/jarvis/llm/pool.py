@@ -267,21 +267,36 @@ def build_pool(settings) -> Pool:
     from .health import rank
 
     pool.endpoints = rank(pool.endpoints)
-    return _prioritise(pool, settings.primary_provider)
+    return _prioritise(pool, settings.primary_provider, settings.provider_order)
 
 
-def _prioritise(pool: Pool, primary: str) -> Pool:
-    """Move one provider's endpoints to the front.
+def _prioritise(pool: Pool, primary: str, order: str = "") -> Pool:
+    """Put providers in the order asked for.
 
     Position in this list *is* the priority: the client walks it in order and
-    stops at the first endpoint that answers, so everything after the primary is
+    stops at the first endpoint that answers, so everything after the first is
     a backup by construction. There is no separate "backup" flag to set, and no
     load balancing — a secondary is only ever reached when everything ahead of it
     is rate limited or failing.
 
-    Ordering within each provider is preserved, so a primary's own model ladder
-    still runs best-first.
+    PROVIDER_ORDER names the whole sequence and wins when set; PRIMARY_PROVIDER
+    only names who goes first. Providers named in neither keep their build
+    order after the named ones. Ordering within each provider is preserved
+    either way, so a provider's own model ladder still runs best-first.
     """
+    wanted = [name.strip().lower() for name in (order or "").split(",") if name.strip()]
+    if wanted:
+        present = {e.label.split(":", 1)[0] for e in pool.endpoints}
+        unknown = [name for name in wanted if name not in present]
+        if unknown:
+            log.warning("PROVIDER_ORDER names providers with no endpoints: %s", ", ".join(unknown))
+        rank_of = {name: i for i, name in enumerate(wanted)}
+        # sorted() is stable, so endpoints sharing a rank keep their build order.
+        pool.endpoints = sorted(
+            pool.endpoints, key=lambda e: rank_of.get(e.label.split(":", 1)[0], len(wanted))
+        )
+        return pool
+
     primary = (primary or "").strip().lower()
     if not primary:
         return pool

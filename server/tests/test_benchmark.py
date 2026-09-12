@@ -441,3 +441,42 @@ async def test_an_exhausted_provider_is_not_reported_as_dead():
             _, note = await find_working_model(client, endpoint, {"b", "c"})
 
     assert note == "none", "a 404 is not an exhausted quota"
+
+
+# ------------------------------------------------------------ measured order
+#
+# scripts/bestmodels.sh applies whatever rank_providers() says, unattended and
+# weekly, so what it says had better be defensible.
+
+
+def test_measured_order_puts_full_size_tool_callers_first_then_fastest():
+    from jarvis.benchmark import rank_providers
+
+    rows = [
+        {"label": "groq:gpt-oss-120b", "reachable": True, "tools_small": True, "tools_large": False, "latency": 0.4},
+        {"label": "gemini:models/gemini-3.6-flash", "reachable": True, "tools_small": True, "tools_large": True, "latency": 1.9},
+        {"label": "custom:auto", "reachable": True, "tools_small": True, "tools_large": True, "latency": 1.1},
+        {"label": "openrouter:x:free", "reachable": True, "tools_small": False, "tools_large": False, "latency": 0.2},
+        {"label": "mistral:mistral-large-latest", "reachable": False, "error": "401"},
+    ]
+    assert rank_providers(rows) == ["custom", "gemini", "groq"], (
+        "full-size passes lead (fastest first), small-only next, failures and dead keys absent"
+    )
+
+
+def test_a_provider_is_judged_by_its_best_endpoint():
+    from jarvis.benchmark import rank_providers
+
+    rows = [
+        {"label": "groq:model-a", "reachable": True, "tools_small": True, "tools_large": False, "latency": 0.3},
+        {"label": "groq:model-b", "reachable": True, "tools_small": True, "tools_large": True, "latency": 0.9},
+        {"label": "gemini:flash", "reachable": True, "tools_small": True, "tools_large": True, "latency": 0.5},
+    ]
+    assert rank_providers(rows) == ["gemini", "groq"]
+
+
+def test_nothing_usable_means_no_order_rather_than_a_bad_one():
+    from jarvis.benchmark import rank_providers
+
+    assert rank_providers([{"label": "groq:x", "reachable": False, "error": "429"}]) == []
+    assert rank_providers([]) == []

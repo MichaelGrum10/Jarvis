@@ -239,6 +239,11 @@ works**, bright while speaking, with the arc reactor in the middle tracking his
 voice. Jarvis speaks in your cloned Fish Audio voice when it is configured, and
 in the closest British voice the device has when it is not — and says which.
 
+**The best free models, measured.** `bash scripts/bestmodels.sh` benchmarks
+every provider you have on the requests Jarvis actually sends and puts the ones
+that pass a full-size tool-calling turn first; `weekly` keeps that order true as
+free tiers change. See `docs/model-capacity.md`.
+
 **More capacity, one command.** `bash scripts/omniroute.sh` runs
 [OmniRoute](https://github.com/diegosouzapw/OmniRoute) as a sidecar — a local
 gateway in front of a large catalogue of free providers — and puts it behind the

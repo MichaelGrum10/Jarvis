@@ -42,6 +42,13 @@ class Settings(BaseSettings):
     # secondary is only reached when everything ahead of it is busy or failing.
     # One of: groq, gemini, cerebras, openrouter, together, github, mistral.
     primary_provider: str = "groq"
+    # The whole order, best first, comma separated — "gemini,custom,groq". When
+    # set it replaces PRIMARY_PROVIDER, which only says who goes first. Written
+    # by `bash scripts/bestmodels.sh`, which measures every configured provider
+    # on the requests this assistant actually sends and puts the ones that pass
+    # a full-size tool-calling turn first, fastest first. Providers not named
+    # keep their place after the named ones.
+    provider_order: str = ""
 
     # --- llm (groq free tier) ---
     groq_api_key: str = ""

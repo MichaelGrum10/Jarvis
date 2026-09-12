@@ -255,6 +255,32 @@ async def benchmark_endpoint(client: httpx.AsyncClient, endpoint) -> dict:
     return row
 
 
+def rank_providers(rows: list[dict]) -> list[str]:
+    """The measured order, best first, from a benchmark's rows.
+
+    A provider is judged by its best endpoint. Passing a full-size tool-calling
+    turn is what matters — that is the request the per-minute caps bite on and
+    the one a fallback exists to catch — so those providers come first, then
+    the ones that manage only the small tool test, and within each group the
+    fastest first. A provider whose every endpoint failed is left out: naming
+    it would put a known-dead provider ahead of one that was never measured.
+    """
+    best: dict[str, tuple[int, int, float]] = {}
+    for row in rows:
+        name = str(row.get("label", "")).split(":", 1)[0]
+        if not name or not row.get("reachable"):
+            continue
+        score = (
+            1 if row.get("tools_large") else 0,
+            1 if row.get("tools_small") else 0,
+            -float(row.get("latency") or 999.0),
+        )
+        if name not in best or score > best[name]:
+            best[name] = score
+    ranked = [name for name, score in best.items() if score[0] or score[1]]
+    return sorted(ranked, key=lambda name: best[name], reverse=True)
+
+
 def verdict(row: dict) -> str:
     if not row.get("reachable"):
         error = row.get("error", "")
@@ -533,6 +559,22 @@ async def main() -> int:
         used = row.get("prompt_tokens")
         if used:
             print(f"    {DIM}a full-size turn costs ~{used} input tokens here{RESET}")
+
+    # The order these measurements argue for. Printed as a setting rather than
+    # applied, because .env lives on the host and this runs in the container —
+    # scripts/bestmodels.sh reads the last line and applies it.
+    order = rank_providers(rows)
+    current = [n.strip() for n in settings.provider_order.split(",") if n.strip()]
+    if order:
+        print(f"\n{BOLD}Measured order, best first:{RESET} {', '.join(order)}")
+        if current == order:
+            print(f"{DIM}Already what PROVIDER_ORDER says.{RESET}")
+        else:
+            print(f"{DIM}Apply it, and keep it current every week:{RESET}")
+            print(f"    {BOLD}bash scripts/bestmodels.sh{RESET}")
+            print(f"{DIM}or by hand:  bash scripts/setkey.sh PROVIDER_ORDER {','.join(order)} "
+                  f"&& docker compose up -d{RESET}")
+        print(f"RECOMMENDED_ORDER={','.join(order)}")
 
     # An endpoint that failed for a reason a different model would fix. A rate
     # limit is excluded — that one is about timing, and swapping models to dodge
